@@ -20,6 +20,9 @@ import 'package:PiliPlus/pages/danmaku/danmaku_model.dart';
 import 'package:PiliPlus/pages/setting/models/play_settings.dart'
     show kMaxVolume;
 import 'package:PiliPlus/pages/sponsor_block/block_mixin.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/media_kit_media_player.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/media_player_factory.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_status.dart';
 import 'package:PiliPlus/plugin/pl_player/models/double_tap_type.dart';
@@ -69,7 +72,7 @@ import 'package:window_manager/window_manager.dart';
 typedef PlayCallback = Future<void>? Function();
 
 class PlPlayerController with BlockConfigMixin {
-  Player? _videoPlayerController;
+  AbstractMediaPlayer? _videoPlayerController;
   VideoController? _videoController;
 
   static PlPlayerController? _instance;
@@ -85,7 +88,7 @@ class PlPlayerController with BlockConfigMixin {
   final RxInt position = RxInt(0);
 
   int get positionInMilliseconds =>
-      videoPlayerController?.state.position.inMilliseconds ?? 0;
+      videoPlayerController?.position.inMilliseconds ?? 0;
 
   final RxInt buffered = RxInt(0);
 
@@ -162,10 +165,11 @@ class PlPlayerController with BlockConfigMixin {
   // 长按倍速
   double get longPressSpeed => _longPressSpeed.value;
 
-  /// [videoPlayerController] instance of Player
-  Player? get videoPlayerController => _videoPlayerController;
+  /// Engine-agnostic media player (media_kit on phone/desktop, AVPlay on Tizen).
+  AbstractMediaPlayer? get videoPlayerController => _videoPlayerController;
 
-  /// [videoController] instance of Player
+  /// media_kit [VideoController] for the non-Tizen render/subtitle path; null on
+  /// Tizen (the AVPlay backend renders through its own [VideoPlayer] widget).
   VideoController? get videoController => _videoController;
 
   bool isMuted = false;
@@ -232,9 +236,9 @@ class PlPlayerController with BlockConfigMixin {
     }
 
     final Size size;
-    final state = videoPlayerController!.state;
-    int width = state.width;
-    int height = state.height;
+    final player = videoPlayerController!;
+    int width = player.videoWidth;
+    int height = player.videoHeight;
     if (width == 0) {
       width = this.width ?? 16;
     }
@@ -278,12 +282,11 @@ class PlPlayerController with BlockConfigMixin {
   }
 
   void enterPip({bool autoEnter = false}) {
-    if (videoPlayerController != null) {
-      final state = videoPlayerController!.state;
+    if (videoPlayerController case final player?) {
       PageUtils.enterPip(
         autoEnter: autoEnter,
-        width: state.width == 0 ? width : state.width,
-        height: state.height == 0 ? height : state.height,
+        width: player.videoWidth == 0 ? width : player.videoWidth,
+        height: player.videoHeight == 0 ? height : player.videoHeight,
         isLive: isLive,
         isPlaying: playerStatus.isPlaying,
       );
@@ -358,7 +361,18 @@ class PlPlayerController with BlockConfigMixin {
 
   late final bool tempPlayerConf = Pref.tempPlayerConf;
 
-  late int? cacheVideoQa = PlatformUtils.isMobile ? null : Pref.defaultVideoQa;
+  // Tizen S90F: cap the default quality at HDR10 (code 125) — the panel plays
+  // HDR10 fine. The tiers ABOVE it are unplayable here: Dolby Vision (126),
+  // 8K (127) is pointless on a 4K panel, HDR-Vivid (129); all are > 125, so a
+  // stored higher-tier default is clamped down to HDR10 rather than requesting
+  // an unplayable stream. Auto-select then takes the highest tier <= 125 the
+  // video offers — HDR10 when present, else 4K/lower. Those higher tiers stay
+  // pickable from the in-player 清晰度 menu.
+  late int? cacheVideoQa = PlatformUtils.isMobile
+      ? null
+      : (PlatformUtils.isTizen && Pref.defaultVideoQa > 125
+            ? 125
+            : Pref.defaultVideoQa);
   late int cacheAudioQa = Pref.defaultAudioQa;
   bool enableHeart = true;
   late final String? hwdec = Pref.enableHA ? Pref.hardwareDecoding : null;
@@ -632,7 +646,7 @@ class PlPlayerController with BlockConfigMixin {
       }
       cancelLongPressTimer();
       if (_videoPlayerController != null &&
-          _videoPlayerController!.state.playing) {
+          _videoPlayerController!.playing) {
         await pause(notify: false);
       }
 
@@ -640,7 +654,7 @@ class PlPlayerController with BlockConfigMixin {
         return;
       }
       // 配置Player 音轨、字幕等等
-      await _createVideoController(dataSource, seekTo, volume);
+      await _createVideoController(dataSource, seekTo, volume, duration);
 
       if (_playerCount == 0) {
         _removeListeners();
@@ -650,7 +664,7 @@ class PlPlayerController with BlockConfigMixin {
         return;
       }
 
-      updateDuration(duration ?? _videoPlayerController!.state.duration);
+      updateDuration(duration ?? _videoPlayerController!.duration);
       position.value = buffered.value = seekTo?.inSeconds ?? 0;
 
       dataStatus.value = .loaded;
@@ -688,7 +702,7 @@ class PlPlayerController with BlockConfigMixin {
   late final isAnim = _pgcType == 1 || _pgcType == 4;
   late final Rx<SuperResolutionType> superResolutionType =
       (isAnim ? Pref.superResolutionType : SuperResolutionType.disable).obs;
-  Future<void> setShader([SuperResolutionType? type, NativePlayer? pp]) async {
+  Future<void> setShader([SuperResolutionType? type]) async {
     if (type == null) {
       type = superResolutionType.value;
     } else {
@@ -697,25 +711,23 @@ class PlPlayerController with BlockConfigMixin {
         setting.put(SettingBoxKey.superResolutionType, type.index);
       }
     }
-    pp ??= _videoPlayerController!;
+    // mpv-only (glsl-shaders); a no-op on the AVPlay backend.
+    final player = _videoPlayerController;
+    if (player == null || !player.supportsSuperResolution) {
+      return;
+    }
     switch (type) {
       case SuperResolutionType.disable:
-        return pp.command(const ['change-list', 'glsl-shaders', 'clr', '']);
+        return player.setSuperResolutionShaders(const []);
       case SuperResolutionType.efficiency:
-        return pp.command([
-          'change-list',
-          'glsl-shaders',
-          'set',
+        return player.setSuperResolutionShaders([
           PathUtils.buildShadersAbsolutePath(
             await copyShadersToExternalDirectory,
             Assets.mpvAnime4KShadersLite,
           ),
         ]);
       case SuperResolutionType.quality:
-        return pp.command([
-          'change-list',
-          'glsl-shaders',
-          'set',
+        return player.setSuperResolutionShaders([
           PathUtils.buildShadersAbsolutePath(
             await copyShadersToExternalDirectory,
             Assets.mpvAnime4KShaders,
@@ -726,8 +738,22 @@ class PlPlayerController with BlockConfigMixin {
 
   static final loudnormRegExp = RegExp('loudnorm=([^,]+)');
 
-  Future<Player> _initPlayer() async {
+  Future<AbstractMediaPlayer> _initPlayer() async {
     assert(_videoPlayerController == null);
+
+    // Samsung TV: route through the AVPlay backend. No media_kit Player / mpv
+    // options / VideoController involved (Tizen has no libmpv).
+    if (PlatformUtils.isTizen) {
+      assert(_videoController == null);
+      final tizenPlayer = createTizenPlayer();
+      tizenPlayer.setMediaHeader(
+        userAgent: BrowserUa.pc,
+        referer: HttpString.baseUrl,
+      );
+      _startListeners(tizenPlayer);
+      return tizenPlayer;
+    }
+
     final opt = {
       'video-sync': Pref.videoSync,
       if (Platform.isAndroid) 'ao': Pref.audioOutput,
@@ -750,7 +776,7 @@ class PlPlayerController with BlockConfigMixin {
 
     assert(_videoController == null);
 
-    _videoController = await VideoController.create(
+    final videoController = await VideoController.create(
       player,
       configuration: VideoControllerConfiguration(
         enableHardwareAcceleration: hwdec != null,
@@ -758,12 +784,14 @@ class PlPlayerController with BlockConfigMixin {
         hwdec: hwdec,
       ),
     );
+    _videoController = videoController;
 
     player.setMediaHeader(userAgent: BrowserUa.pc, referer: HttpString.baseUrl);
 
-    _startListeners(player);
+    final wrapped = wrapMediaKit(player, videoController);
+    _startListeners(wrapped);
 
-    return player;
+    return wrapped;
   }
 
   Map<String, String>? _buffer;
@@ -777,6 +805,7 @@ class PlPlayerController with BlockConfigMixin {
     DataSource dataSource,
     Duration? seekTo,
     Volume? volume,
+    Duration? duration,
   ) async {
     isBuffering.value = false;
     _heartDuration = 0;
@@ -811,11 +840,16 @@ class PlPlayerController with BlockConfigMixin {
       }
     }
 
+    final bool isFile = dataSource is FileSource;
     String video = dataSource.videoSource;
+    // Raw second DASH stream, handed to the AVPlay backend so it can merge the
+    // two urls into a synthetic manifest. null when muxed / audio-only.
+    String? separateAudio;
     if (dataSource.audioSource case final audio? when (audio.isNotEmpty)) {
       if (onlyPlayAudio.value) {
         video = audio;
       } else {
+        separateAudio = audio;
         extras['audio-files'] =
             '"${Platform.isWindows ? audio.replaceAll(';', r'\;') : audio.replaceAll(':', r'\:')}"';
       }
@@ -845,12 +879,19 @@ class PlPlayerController with BlockConfigMixin {
         }
       }
     }
-
     await player.open(
-      Media(
-        video,
+      MediaSource(
+        videoUri: video,
+        audioUri: separateAudio,
         start: seekTo,
-        extras: extras.isEmpty ? null : extras,
+        disableCache: isFile,
+        engineOptions: extras.isEmpty ? null : extras,
+        // Real DASH metadata only makes sense for the dual-stream case the
+        // AVPlay proxy merges into an MPD; on muxed / audio-only (`separateAudio`
+        // null) the videoUri is not the DASH video stream, so leave it off.
+        videoMeta: separateAudio != null ? dataSource.videoMeta : null,
+        audioMeta: separateAudio != null ? dataSource.audioMeta : null,
+        totalDuration: duration,
       ),
       play: false,
     );
@@ -860,13 +901,7 @@ class PlPlayerController with BlockConfigMixin {
     if (dataSource is FileSource) {
       return null;
     }
-    if (_videoPlayerController case final ctr? when (ctr.current.isNotEmpty)) {
-      return ctr.open(
-        ctr.current.last.copyWith(start: ctr.state.position),
-        play: true,
-      );
-    }
-    return null;
+    return _videoPlayerController?.reopenAtCurrentPosition(play: true);
   }
 
   // 开始播放
@@ -876,7 +911,7 @@ class PlPlayerController with BlockConfigMixin {
     if (isLive) {
       await setPlaybackSpeed(1.0);
     } else {
-      if (_videoPlayerController?.state.rate != _playbackSpeed.value) {
+      if (_videoPlayerController?.rate != _playbackSpeed.value) {
         await setPlaybackSpeed(_playbackSpeed.value);
       }
     }
@@ -902,12 +937,11 @@ class PlPlayerController with BlockConfigMixin {
   final Set<ValueChanged<PlayerStatus>> _statusListeners = {};
 
   /// 播放事件监听
-  void _startListeners(NativePlayer player) {
+  void _startListeners(AbstractMediaPlayer player) {
     assert(_subscriptions == null);
-    final stream = player.stream;
     _subscriptions = [
       /// playing
-      stream.playing.listen((bool playing) {
+      player.playingStream.listen((bool playing) {
         WakelockPlus.toggle(enable: playing);
         if (playing) {
           if (_isAutoEnterPip) {
@@ -933,14 +967,14 @@ class PlPlayerController with BlockConfigMixin {
           element(playing ? .playing : .paused);
         }
 
-        final seconds = videoPlayerController!.state.position.inSeconds;
+        final seconds = player.position.inSeconds;
         if (seconds != 0) {
           makeHeartBeat(seconds, type: .status);
         }
       }),
 
       ///completed
-      stream.completed.listen((bool completed) {
+      player.completedStream.listen((bool completed) {
         if (completed) {
           playerStatus.value = .completed;
 
@@ -953,7 +987,7 @@ class PlPlayerController with BlockConfigMixin {
       }),
 
       /// position
-      stream.position.listen((Duration position) {
+      player.positionStream.listen((Duration position) {
         final posInSeconds = position.inSeconds;
 
         if (posInSeconds != this.position.value) {
@@ -970,11 +1004,11 @@ class PlPlayerController with BlockConfigMixin {
           element(position);
         }
       }),
-      stream.duration.listen(updateDuration),
-      stream.buffer.listen((Duration buffer) {
+      player.durationStream.listen(updateDuration),
+      player.bufferStream.listen((Duration buffer) {
         buffered.value = buffer.inSeconds;
       }),
-      stream.buffering.listen((bool buffering) {
+      player.bufferingStream.listen((bool buffering) {
         isBuffering.value = buffering;
         videoPlayerServiceHandler?.onStatusChange(
           playerStatus.value,
@@ -982,15 +1016,16 @@ class PlPlayerController with BlockConfigMixin {
           isLive,
         );
       }),
-      if (kDebugMode)
-        stream.log.listen(((PlayerLog log) {
+      // mpv log stream is media_kit-only; skip on the AVPlay backend.
+      if (kDebugMode && player is MediaKitMediaPlayer)
+        player.rawPlayer.stream.log.listen(((PlayerLog log) {
           if (log.level == 'error' || log.level == 'fatal') {
             Utils.reportError('${log.level}: ${log.prefix}: ${log.text}', null);
           } else {
             debugPrint(log.toString());
           }
         })),
-      stream.error.listen((String event) {
+      player.errorStream.listen((String event) {
         if (dataSource is FileSource &&
             event.startsWith("Failed to open file")) {
           return;
@@ -1039,7 +1074,12 @@ class PlPlayerController with BlockConfigMixin {
             return;
           }
           Utils.reportError(event);
-          // SmartDialog.showToast('视频加载错误, $event');
+          if (PlatformUtils.isTizen) {
+            // AVPlay/CAPI errors (e.g. "Not supported format") match none of the
+            // mpv strings above and would otherwise be silently swallowed. Give
+            // the user actionable feedback instead of a stuck/black player.
+            SmartDialog.showToast('视频播放失败，请重试或切换清晰度');
+          }
         }
       }),
     ];
@@ -1072,7 +1112,7 @@ class PlPlayerController with BlockConfigMixin {
     Future<void> seek() async {
       if (isSeek) {
         /// 拖动进度条调节时，不等待第一帧，防止抖动
-        await _videoPlayerController?.stream.buffer.first;
+        await _videoPlayerController?.bufferStream.first;
       }
       danmakuController?.clear();
       try {
@@ -1098,7 +1138,7 @@ class PlPlayerController with BlockConfigMixin {
   Future<void> setPlaybackSpeed(double speed) async {
     lastPlaybackSpeed = playbackSpeed;
 
-    if (speed == _videoPlayerController?.state.rate) {
+    if (speed == _videoPlayerController?.rate) {
       return;
     }
 
@@ -1279,7 +1319,7 @@ class PlPlayerController with BlockConfigMixin {
   }
 
   bool get isCompleted =>
-      videoPlayerController!.state.completed ||
+      videoPlayerController!.completed ||
       durationInMilliseconds - positionInMilliseconds <= 50;
 
   // 双击播放、暂停
@@ -1304,16 +1344,16 @@ class PlPlayerController with BlockConfigMixin {
   }
 
   void onForward(Duration duration) {
-    onForwardBackward(videoPlayerController!.state.position + duration);
+    onForwardBackward(videoPlayerController!.position + duration);
   }
 
   void onBackward(Duration duration) {
-    onForwardBackward(videoPlayerController!.state.position - duration);
+    onForwardBackward(videoPlayerController!.position - duration);
   }
 
   void onForwardBackward(Duration duration) {
     seekTo(
-      duration.clamp(Duration.zero, videoPlayerController!.state.duration),
+      duration.clamp(Duration.zero, videoPlayerController!.duration),
       isSeek: false,
     ).whenComplete(play);
   }
@@ -1619,9 +1659,7 @@ class PlPlayerController with BlockConfigMixin {
 
   void setOnlyPlayAudio() {
     onlyPlayAudio.value = !onlyPlayAudio.value;
-    videoPlayerController?.setVideoTrack(
-      onlyPlayAudio.value ? VideoTrack.no() : VideoTrack.auto(),
-    );
+    videoPlayerController?.setVideoEnabled(!onlyPlayAudio.value);
   }
 
   late final Map<String, ui.Image?> previewCache = {};
@@ -1656,10 +1694,20 @@ class PlPlayerController with BlockConfigMixin {
   }
 
   Future<void> getVideoShot() async {
-    videoShot = await VideoHttp.videoshot(bvid: bvid, cid: cid!);
+    final reqCid = cid!;
+    final res = await VideoHttp.videoshot(bvid: bvid, cid: reqCid);
+    // Drop a stale response that resolved after an episode change, else the new
+    // episode would keep showing the previous one's preview thumbnails.
+    if (cid == reqCid) videoShot = res;
   }
 
   Future<void> takeScreenshot() async {
+    // Screenshot is an mpv-only capability; the AVPlay backend cannot read back
+    // the hardware overlay surface.
+    if (videoPlayerController?.supportsScreenshot != true) {
+      SmartDialog.showToast('当前播放器不支持截图');
+      return;
+    }
     SmartDialog.showToast('截图中');
     final time = DurationUtils.formatDuration(
       positionInMilliseconds / 1000,

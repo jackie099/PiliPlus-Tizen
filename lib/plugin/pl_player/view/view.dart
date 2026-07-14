@@ -36,6 +36,9 @@ import 'package:PiliPlus/pages/video/post_panel/popup_menu_text.dart';
 import 'package:PiliPlus/pages/video/post_panel/view.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/avplay_media_player.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/tizen_subtitle_overlay.dart';
 import 'package:PiliPlus/plugin/pl_player/models/bottom_control_type.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_status.dart';
 import 'package:PiliPlus/plugin/pl_player/models/double_tap_type.dart';
@@ -72,7 +75,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
-    show RenderProxyBox, SemanticsConfiguration;
+    show RenderBox, RenderProxyBox, SemanticsConfiguration;
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter_volume_controller/flutter_volume_controller.dart';
@@ -81,6 +84,8 @@ import 'package:get/get.dart';
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
+import 'package:video_player_avplay/video_player.dart'
+    show VideoPlayer, VideoPlayerController, VideoPlayerValue;
 import 'package:window_manager/window_manager.dart';
 
 part 'widgets.dart';
@@ -130,7 +135,10 @@ class PLVideoPlayer extends StatefulWidget {
 class _PLVideoPlayerState extends State<PLVideoPlayer>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late AnimationController _animationController;
-  late VideoController videoController;
+
+  /// media_kit render/subtitle controller; null on Tizen (AVPlay renders through
+  /// its own [VideoPlayer] widget and a Flutter subtitle overlay).
+  VideoController? videoController;
   late final CommonIntroController introController = widget.introController!;
   late final VideoDetailController videoDetailController =
       widget.videoDetailController!;
@@ -264,7 +272,9 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       vsync: this,
       duration: const Duration(milliseconds: 100),
     );
-    videoController = plPlayerController.videoController!;
+    if (!PlatformUtils.isTizen) {
+      videoController = plPlayerController.videoController;
+    }
 
     if (PlatformUtils.isMobile) {
       Future.microtask(() {
@@ -332,7 +342,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     if (!plPlayerController.continuePlayInBackground.value) {
       late final player = plPlayerController.videoPlayerController;
       if (const <AppLifecycleState>[.paused, .detached].contains(state)) {
-        if (player != null && player.state.playing) {
+        if (player != null && player.playing) {
           _pauseDueToPauseUponEnteringBackgroundMode = true;
           player.pause();
         }
@@ -992,8 +1002,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
         ..seekToPos = null;
     } else {
       plPlayerController.position.value =
-          plPlayerController.videoPlayerController?.state.position.inSeconds ??
-          0;
+          plPlayerController.videoPlayerController?.position.inSeconds ?? 0;
     }
   }
 
@@ -1362,19 +1371,24 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
           Positioned.fill(top: 4, child: danmaku),
 
         if (!isLive)
-          Positioned.fill(
-            child: IgnorePointer(
-              ignoring: !plPlayerController.enableDragSubtitle,
-              child: Obx(
-                () => SubtitleView(
-                  controller: videoController,
-                  configuration: plPlayerController.subtitleConfig.value,
-                  enableDragSubtitle: plPlayerController.enableDragSubtitle,
-                  onUpdatePadding: plPlayerController.onUpdatePadding,
+          if (PlatformUtils.isTizen)
+            Positioned.fill(
+              child: IgnorePointer(child: _tizenSubtitleView()),
+            )
+          else
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !plPlayerController.enableDragSubtitle,
+                child: Obx(
+                  () => SubtitleView(
+                    controller: videoController!,
+                    configuration: plPlayerController.subtitleConfig.value,
+                    enableDragSubtitle: plPlayerController.enableDragSubtitle,
+                    onUpdatePadding: plPlayerController.onUpdatePadding,
+                  ),
                 ),
               ),
             ),
-          ),
 
         if (plPlayerController.enableTapDm)
           Obx(
@@ -1583,51 +1597,54 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
           ),
         ),
 
-        // 头部、底部控制条
-        Positioned.fill(
-          top: -1,
-          bottom: -1,
-          child: ClipRect(
-            child: RepaintBoundary(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  AppBarAni(
-                    isTop: true,
-                    controller: _animationController,
-                    isFullScreen: isFullScreen,
-                    removeSafeArea: plPlayerController.removeSafeArea,
-                    child: plPlayerController.isDesktopPip
-                        ? GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onPanStart: (_) => windowManager.startDragging(),
-                            child: widget.headerControl,
-                          )
-                        : widget.headerControl,
-                  ),
-                  AppBarAni(
-                    isTop: false,
-                    controller: _animationController,
-                    isFullScreen: isFullScreen,
-                    removeSafeArea: plPlayerController.removeSafeArea,
-                    child:
-                        widget.bottomControl ??
-                        BottomControl(
-                          maxWidth: maxWidth,
-                          isFullScreen: isFullScreen,
-                          controller: plPlayerController,
-                          videoDetailController: videoDetailController,
-                          buildBottomControl: () => buildBottomControl(
-                            videoDetailController,
-                            maxWidth > maxHeight,
+        // The TV page owns its D-pad chrome. SlideTransition only moves paint,
+        // so laying out the mobile bars while hidden can still overflow its
+        // fullscreen Column on Tizen.
+        if (!PlatformUtils.isTizen)
+          Positioned.fill(
+            top: -1,
+            bottom: -1,
+            child: ClipRect(
+              child: RepaintBoundary(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    AppBarAni(
+                      isTop: true,
+                      controller: _animationController,
+                      isFullScreen: isFullScreen,
+                      removeSafeArea: plPlayerController.removeSafeArea,
+                      child: plPlayerController.isDesktopPip
+                          ? GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              onPanStart: (_) => windowManager.startDragging(),
+                              child: widget.headerControl,
+                            )
+                          : widget.headerControl,
+                    ),
+                    AppBarAni(
+                      isTop: false,
+                      controller: _animationController,
+                      isFullScreen: isFullScreen,
+                      removeSafeArea: plPlayerController.removeSafeArea,
+                      child:
+                          widget.bottomControl ??
+                          BottomControl(
+                            maxWidth: maxWidth,
+                            isFullScreen: isFullScreen,
+                            controller: plPlayerController,
+                            videoDetailController: videoDetailController,
+                            buildBottomControl: () => buildBottomControl(
+                              videoDetailController,
+                              maxWidth > maxHeight,
+                            ),
                           ),
-                        ),
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
 
         // Positioned(
         //   right: 25,
@@ -1861,7 +1878,9 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                             color: Colors.white,
                           ),
                           onLongPress:
-                              (Platform.isAndroid || kDebugMode) && !isLive
+                              !PlatformUtils.isTizen &&
+                                  (Platform.isAndroid || kDebugMode) &&
+                                  !isLive
                               ? screenshotWebp
                               : null,
                           onTap: plPlayerController.takeScreenshot,
@@ -2011,50 +2030,129 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       width: maxWidth,
       height: maxHeight,
       color: widget.fill,
-      child: Obx(
-        () => MouseInteractiveViewer(
-          scaleEnabled: !plPlayerController.controlsLock.value,
-          pointerSignalFallback: _onPointerSignal,
-          onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
-          onPointerPanZoomEnd: _onPointerPanZoomEnd,
-          onPointerDown: _onPointerDown,
-          onPanStart: _onPanStart,
-          onPanUpdate: _onPanUpdate,
-          onPanEnd: _onPanEnd,
-          onScaleUpdate: _onScaleUpdate,
-          scaleGestureRecognizer: _scaleGestureRecognizer,
-          panEnabled: false,
-          minScale: plPlayerController.enableShrinkVideoSize ? 0.75 : 1,
-          maxScale: 2.0,
-          boundaryMargin: plPlayerController.enableShrinkVideoSize
-              ? const .all(double.infinity)
-              : .zero,
-          panAxis: .aligned,
-          transformationController: _transformationController,
-          childKey: _videoKey,
-          child: RepaintBoundary(
-            key: _videoKey,
-            child: Obx(
-              () {
-                final videoFit = plPlayerController.videoFit.value;
-                return Transform.flip(
-                  flipX: plPlayerController.flipX.value,
-                  flipY: plPlayerController.flipY.value,
-                  child: FittedBox(
-                    fit: videoFit.boxFit,
-                    alignment: widget.alignment,
-                    child: SimpleVideo(
-                      controller: plPlayerController.videoController!,
-                      fill: widget.fill,
-                      aspectRatio: videoFit.aspectRatio,
-                    ),
+      // A Hole must paint into the main scene to clear the transparent Tizen
+      // window. The mobile viewer's Transform/RepaintBoundary isolates that
+      // blend operation and can leave the window background visible instead of
+      // the hardware video plane.
+      child: PlatformUtils.isTizen
+          ? _tizenVideoView(plPlayerController)
+          : _mobileVideoWidget,
+    );
+  }
+
+  Widget get _mobileVideoWidget {
+    return Obx(
+      () => MouseInteractiveViewer(
+        scaleEnabled: !plPlayerController.controlsLock.value,
+        pointerSignalFallback: _onPointerSignal,
+        onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
+        onPointerPanZoomEnd: _onPointerPanZoomEnd,
+        onPointerDown: _onPointerDown,
+        onPanStart: _onPanStart,
+        onPanUpdate: _onPanUpdate,
+        onPanEnd: _onPanEnd,
+        onScaleUpdate: _onScaleUpdate,
+        scaleGestureRecognizer: _scaleGestureRecognizer,
+        panEnabled: false,
+        minScale: plPlayerController.enableShrinkVideoSize ? 0.75 : 1,
+        maxScale: 2.0,
+        boundaryMargin: plPlayerController.enableShrinkVideoSize
+            ? const .all(double.infinity)
+            : .zero,
+        panAxis: .aligned,
+        transformationController: _transformationController,
+        childKey: _videoKey,
+        child: RepaintBoundary(
+          key: _videoKey,
+          child: Obx(
+            () {
+              final videoFit = plPlayerController.videoFit.value;
+              return Transform.flip(
+                flipX: plPlayerController.flipX.value,
+                flipY: plPlayerController.flipY.value,
+                child: FittedBox(
+                  fit: videoFit.boxFit,
+                  alignment: widget.alignment,
+                  child: SimpleVideo(
+                    controller: plPlayerController.videoController!,
+                    fill: widget.fill,
+                    aspectRatio: videoFit.aspectRatio,
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),
+    );
+  }
+
+  /// Samsung TV video surface. The `video_player_avplay` CAPI backend renders on
+  /// a hardware overlay plane tied to Flutter's window and shows through the
+  /// [VideoPlayer] widget's transparent Hole. The overlay fills the widget's
+  /// on-screen rect (the plugin forwards it as the native display ROI), so the
+  /// selected fit is expressed purely as layout of that widget.
+  Widget _tizenVideoView(PlPlayerController plPlayerController) {
+    final player = plPlayerController.videoPlayerController;
+    if (player is! AvplayMediaPlayer) {
+      return const ColoredBox(color: Colors.black);
+    }
+    return ValueListenableBuilder<VideoPlayerController?>(
+      valueListenable: player.controllerListenable,
+      builder: (context, controller, _) {
+        if (controller == null) {
+          return const ColoredBox(color: Colors.black);
+        }
+        return Obx(
+          () {
+            final fit = plPlayerController.videoFit.value;
+            return ValueListenableBuilder<VideoPlayerValue>(
+              valueListenable: controller,
+              builder: (context, value, surface) =>
+                  _fitTizenOverlay(fit, value.size, surface!),
+              child: VideoPlayer(controller),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Applies [fit] to the hardware-overlay [surface] as layout: `fill` stretches
+  /// it to the whole area; everything else letterboxes to a preserved aspect
+  /// ratio (the fixed 4:3 / 16:9 ratios, or the video's own), which the native
+  /// side then renders into without distortion.
+  Widget _fitTizenOverlay(VideoFitType fit, Size videoSize, Widget surface) {
+    if (fit.boxFit == BoxFit.fill) {
+      return SizedBox.expand(child: surface);
+    }
+    final double ratio =
+        fit.aspectRatio ??
+        (videoSize.width > 0 && videoSize.height > 0
+            ? videoSize.width / videoSize.height
+            : 16 / 9);
+    return Center(
+      child: AspectRatio(aspectRatio: ratio, child: surface),
+    );
+  }
+
+  /// Flutter-drawn subtitle overlay for the AVPlay backend (which cannot render
+  /// external subtitle tracks natively). Driven by the player's position stream;
+  /// the active subtitle source is pushed via `setSubtitle`.
+  Widget _tizenSubtitleView() {
+    final player = plPlayerController.videoPlayerController;
+    if (player is! AvplayMediaPlayer) {
+      return const SizedBox.shrink();
+    }
+    return StreamBuilder<MediaSubtitle?>(
+      stream: player.subtitleStream,
+      initialData: player.currentSubtitle,
+      builder: (context, snapshot) {
+        return TizenSubtitleOverlay(
+          positionStream: player.positionStream,
+          source: snapshot.data?.uri,
+        );
+      },
     );
   }
 

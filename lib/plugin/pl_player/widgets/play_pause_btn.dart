@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
 
 class PlayOrPauseButton extends StatefulWidget {
   final PlPlayerController plPlayerController;
@@ -20,7 +20,7 @@ class PlayOrPauseButtonState extends State<PlayOrPauseButton>
     with SingleTickerProviderStateMixin {
   late final AnimationController controller;
   late final StreamSubscription<bool> subscription;
-  late Player player;
+  late AbstractMediaPlayer player;
 
   @override
   void initState() {
@@ -28,10 +28,10 @@ class PlayOrPauseButtonState extends State<PlayOrPauseButton>
     player = widget.plPlayerController.videoPlayerController!;
     controller = AnimationController(
       vsync: this,
-      value: player.state.playing ? 1 : 0,
+      value: player.playing ? 1 : 0,
       duration: const Duration(milliseconds: 200),
     );
-    subscription = player.stream.playing.listen((playing) {
+    subscription = player.playingStream.listen((playing) {
       if (playing) {
         controller.forward();
       } else {
@@ -57,7 +57,7 @@ class PlayOrPauseButtonState extends State<PlayOrPauseButton>
         onTap: widget.plPlayerController.onDoubleTapCenter,
         child: Center(
           child: AnimatedIcon(
-            semanticLabel: player.state.playing ? '暂停' : '播放',
+            semanticLabel: player.playing ? '暂停' : '播放',
             progress: controller,
             icon: AnimatedIcons.play_pause,
             color: Colors.white,
