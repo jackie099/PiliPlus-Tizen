@@ -240,6 +240,13 @@ abstract final class Pref {
     defaultValue: AudioQuality.hiRes.code,
   );
 
+  /// Tizen TV: sticky opt-in to prefer the Dolby Atmos (EC-3, 30250/30255)
+  /// track whenever a video ships one. Kept separate from [defaultAudioQa]
+  /// because a dolby code stored there would downgrade flac-only videos to
+  /// 192K. Read only behind `PlatformUtils.isTizen`; mobile is unaffected.
+  static bool get preferDolbyAtmos =>
+      _setting.get(SettingBoxKey.preferDolbyAtmos, defaultValue: false);
+
   static int get defaultAudioQaCellular => _setting.get(
     SettingBoxKey.defaultAudioQaCellular,
     defaultValue: AudioQuality.k192.code,
