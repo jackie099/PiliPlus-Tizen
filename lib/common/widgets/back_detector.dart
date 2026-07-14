@@ -27,7 +27,12 @@ class BackDetector extends StatelessWidget {
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
-    if (event.logicalKey == .escape && event is KeyDownEvent) {
+    // escape: desktop keyboard / mouse back. goBack + browserBack: TV remote
+    // Back button (Tizen delivers it as a Back key, not escape).
+    if (event is KeyDownEvent &&
+        (event.logicalKey == .escape ||
+            event.logicalKey == .goBack ||
+            event.logicalKey == .browserBack)) {
       onBack();
       return .handled;
     }

@@ -68,17 +68,27 @@ import 'package:PiliPlus/pages/video/view.dart';
 import 'package:PiliPlus/pages/webview/view.dart';
 import 'package:PiliPlus/pages/whisper/view.dart';
 import 'package:PiliPlus/pages/whisper_detail/view.dart';
+import 'package:PiliPlus/tv/pages/tv_video_page.dart';
+import 'package:PiliPlus/tv/tv_main.dart';
+import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:get/get.dart';
 
 class Routes {
   static final List<GetPage<dynamic>> getPages = [
-    GetPage(name: '/', page: () => const MainApp()),
+    GetPage(
+      name: '/',
+      page: () => PlatformUtils.isTV ? const TvMain() : const MainApp(),
+    ),
     // 首页(推荐)
     GetPage(name: '/home', page: () => const HomePage()),
     // 热门
     GetPage(name: '/hot', page: () => const HotPage()),
-    // 视频详情
-    GetPage(name: '/videoV', page: () => const VideoDetailPageV()),
+    // 视频详情（TV 上用 D-pad 播放页复用同一控制器/播放器会话）
+    GetPage(
+      name: '/videoV',
+      page: () =>
+          PlatformUtils.isTV ? const TvVideoPage() : const VideoDetailPageV(),
+    ),
     //
     GetPage(name: '/webview', page: () => const WebviewPage()),
     // 设置

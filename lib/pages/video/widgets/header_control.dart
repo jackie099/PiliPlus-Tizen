@@ -36,6 +36,7 @@ import 'package:PiliPlus/pages/video/introduction/ugc/widgets/action_item.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/menu_row.dart';
 import 'package:PiliPlus/pages/video/widgets/header_mixin.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/media_kit_media_player.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
 import 'package:PiliPlus/services/shutdown_timer_service.dart'
@@ -746,13 +747,18 @@ class HeaderControlState extends State<HeaderControl>
                     leading: const Icon(Icons.download_outlined, size: 20),
                     title: const Text('保存字幕', style: titleStyle),
                   ),
-                if (plPlayerController.videoPlayerController case final player?)
-                  ListTile(
-                    dense: true,
-                    title: const Text('播放信息', style: titleStyle),
-                    leading: const Icon(Icons.info_outline, size: 20),
-                    onTap: () => showPlayerInfo(context, player: player),
-                  ),
+                // 播放信息 reads mpv-only properties (NativePlayer); media_kit only.
+                if (!PlatformUtils.isTizen)
+                  if ((plPlayerController.videoPlayerController
+                          as MediaKitMediaPlayer?)
+                      ?.rawPlayer
+                      case final player?)
+                    ListTile(
+                      dense: true,
+                      title: const Text('播放信息', style: titleStyle),
+                      leading: const Icon(Icons.info_outline, size: 20),
+                      onTap: () => showPlayerInfo(context, player: player),
+                    ),
                 ListTile(
                   dense: true,
                   onTap: () {

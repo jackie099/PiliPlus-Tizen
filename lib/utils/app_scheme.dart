@@ -19,6 +19,7 @@ import 'package:PiliPlus/pages/subscription_detail/view.dart';
 import 'package:PiliPlus/pages/video/reply_reply/view.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
+import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/request_utils.dart';
 import 'package:PiliPlus/utils/url_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
@@ -35,6 +36,10 @@ abstract final class PiliScheme {
   static final _prefixRegex = RegExp(r'^\S+://');
 
   static void init() {
+    // app_links has no Tizen implementation; skip the OS deep-link listener on
+    // the TV. The routePush* helpers below are still used for in-app URL
+    // handling (share links, in-page bilibili:// urls).
+    if (PlatformUtils.isTizen) return;
     // Register our protocol only on Windows platform
     // registerProtocolHandler('bilibili');
     appLinks = AppLinks();

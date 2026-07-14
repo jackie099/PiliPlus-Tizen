@@ -46,6 +46,7 @@ import 'package:PiliPlus/pages/video/post_panel/view.dart';
 import 'package:PiliPlus/pages/video/send_danmaku/view.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/heart_beat_type.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
@@ -73,7 +74,6 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter_volume_controller/flutter_volume_controller.dart';
 import 'package:get/get.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:media_kit/media_kit.dart' hide Subtitle;
 
 class VideoDetailController extends GetxController
     with GetTickerProviderStateMixin, BlockMixin {
@@ -145,7 +145,21 @@ class VideoDetailController extends GetxController
   Box setting = GStorage.setting;
 
   // 预设的解码格式
-  late List<VideoDecodeFormatType> preferCodecs = Pref.preferCodecs;
+  // Tizen (S90F TV): video is served through the localhost DASH proxy (CAPI
+  // MediaPlayer backend) with a TRUTHFUL codec MPD (see BiliDashProxy._buildMpd).
+  // Prefer HEVC (H.265): it is hardware-decoded on the S90F 4K panel and far more
+  // efficient than H.264 at high resolutions — 4K H.264 is heavy enough to stutter
+  // on the CAPI decoder, whereas 4K HEVC plays smoothly at a fraction of the
+  // bitrate. AVC stays as the universal fallback (every quality has it; if a HEVC
+  // stream ever fails to decode, the swallowed-failure fix surfaces an error so
+  // the user can drop quality). AV1 last.
+  late List<VideoDecodeFormatType> preferCodecs = PlatformUtils.isTizen
+      ? const [
+          VideoDecodeFormatType.HEVC,
+          VideoDecodeFormatType.AVC,
+          VideoDecodeFormatType.AV1,
+        ]
+      : Pref.preferCodecs;
 
   bool get showReply => isFileSource
       ? false
@@ -527,7 +541,7 @@ class VideoDetailController extends GetxController
   @override
   BlockConfigMixin get blockConfig => plPlayerController;
   @override
-  Player? get player => plPlayerController.videoPlayerController;
+  AbstractMediaPlayer? get player => plPlayerController.videoPlayerController;
   @override
   bool get isFullScreen => plPlayerController.isFullScreen.value;
   @override
@@ -679,7 +693,7 @@ class VideoDetailController extends GetxController
     final currentVideoQa = this.currentVideoQa.value;
     if (currentVideoQa == null) return;
     _autoPlay.value = true;
-    playedTime = plPlayerController.videoPlayerController?.state.position;
+    playedTime = plPlayerController.videoPlayerController?.position;
     plPlayerController
       ..isBuffering.value = false
       ..buffered.value = 0;
@@ -712,6 +726,64 @@ class VideoDetailController extends GetxController
     return null;
   }
 
+  /// The audio [BaseItem] currently selected for playback, resolved from the
+  /// active [currentAudioQa]. null when this source carries no DASH audio.
+  AudioItem? _selectedAudioItem() {
+    final audioList = data.dash?.audio;
+    if (audioList == null || audioList.isEmpty) {
+      return null;
+    }
+    final qa = currentAudioQa;
+    if (qa == null) {
+      return audioList.first;
+    }
+    return audioList.firstWhere(
+      (i) => i.id == qa.code,
+      orElse: () => audioList.first,
+    );
+  }
+
+  /// Snapshot the real DASH metadata of a selected [BaseItem] (video or audio)
+  /// so the Tizen proxy can emit a truthful manifest. Missing/empty fields stay
+  /// null and the proxy substitutes a safe default.
+  static DashStreamMeta _dashMetaOf(BaseItem item) {
+    final segmentBase = item.segmentBase;
+    return DashStreamMeta(
+      codecs: _nonEmpty(item.codecs),
+      mimeType: _nonEmpty(item.mimeType),
+      bandwidth: item.bandWidth,
+      width: item.width,
+      height: item.height,
+      frameRate: _nonEmpty(item.frameRate),
+      sar: _nonEmpty(item.sar),
+      initializationRange: _rangeFrom(
+        segmentBase,
+        const ['initialization', 'Initialization', 'init'],
+      ),
+      indexRange: _rangeFrom(
+        segmentBase,
+        const ['indexRange', 'index_range', 'Index', 'indexrange'],
+      ),
+    );
+  }
+
+  static String? _nonEmpty(String? s) => (s != null && s.isNotEmpty) ? s : null;
+
+  /// Read the first non-empty String value among [keys] from a Bilibili
+  /// `segmentBase` map (key spelling varies between the REST and app APIs).
+  static String? _rangeFrom(Map? m, List<String> keys) {
+    if (m == null) {
+      return null;
+    }
+    for (final k in keys) {
+      final v = m[k];
+      if (v is String && v.isNotEmpty) {
+        return v;
+      }
+    }
+    return null;
+  }
+
   Future<void> playerInit({
     bool? autoplay,
     bool autoFullScreenFlag = false,
@@ -719,6 +791,21 @@ class VideoDetailController extends GetxController
     Duration? seek = defaultST ?? playedTime;
     if (seek == null || seek == Duration.zero) {
       seek = getFirstSegment();
+    }
+    // Tizen proxy path: carry the SELECTED stream's real DASH metadata down to
+    // the localhost DASH proxy so the synthesized MPD advertises the true codec
+    // (HEVC/AV1/FLAC/...) instead of a hardcoded AVC/AAC placeholder. Additive:
+    // null on file sources and ignored by the media_kit (mobile) backend.
+    DashStreamMeta? videoMeta;
+    DashStreamMeta? audioMeta;
+    if (!isFileSource) {
+      videoMeta = _dashMetaOf(firstVideo);
+      if (audioUrl?.isNotEmpty == true) {
+        final AudioItem? audioItem = _selectedAudioItem();
+        if (audioItem != null) {
+          audioMeta = _dashMetaOf(audioItem);
+        }
+      }
     }
     await plPlayerController.setDataSource(
       isFileSource
@@ -731,6 +818,8 @@ class VideoDetailController extends GetxController
           : NetworkSource(
               videoSource: videoUrl!,
               audioSource: audioUrl,
+              videoMeta: videoMeta,
+              audioMeta: audioMeta,
             ),
       seekTo: seek,
       duration: data.timeLength == null
@@ -932,23 +1021,36 @@ class VideoDetailController extends GetxController
 
       videoUrl = VideoUtils.getCdnUrl(firstVideo.playUrls);
 
-      /// 优先顺序 设置中指定质量 -> 当前可选的最高质量
+      /// 优先顺序 (Tizen)杜比全景声 -> 设置中指定质量 -> 当前可选的最高质量
       AudioItem? firstAudio;
       final audioList = data.dash?.audio;
       if (audioList != null && audioList.isNotEmpty) {
-        final List<int> audioIds = audioList.map((map) => map.id!).toList();
-        int closestNumber = audioIds.findClosestTarget(
-          (e) => e <= plPlayerController.cacheAudioQa,
-          (a, b) => a > b ? a : b,
-        );
-        if (!audioIds.contains(plPlayerController.cacheAudioQa) &&
-            audioIds.any((e) => e > plPlayerController.cacheAudioQa)) {
-          closestNumber = AudioQuality.k192.code;
+        // Dolby Atmos passthrough (Tizen TV, opt-in): the EC-3 ids (30250/30255)
+        // sit numerically BELOW 192K (30280), so the closest-target rule below
+        // can never reach them — pick the dolby track directly when the user has
+        // opted in and this video carries one.
+        if (PlatformUtils.isTizen && Pref.preferDolbyAtmos) {
+          firstAudio = audioList.firstWhereOrNull(
+            (e) =>
+                e.id == AudioQuality.dolby_30250.code ||
+                e.id == AudioQuality.dolby_30255.code,
+          );
         }
-        firstAudio = audioList.firstWhere(
-          (e) => e.id == closestNumber,
-          orElse: () => audioList.first,
-        );
+        if (firstAudio == null) {
+          final List<int> audioIds = audioList.map((map) => map.id!).toList();
+          int closestNumber = audioIds.findClosestTarget(
+            (e) => e <= plPlayerController.cacheAudioQa,
+            (a, b) => a > b ? a : b,
+          );
+          if (!audioIds.contains(plPlayerController.cacheAudioQa) &&
+              audioIds.any((e) => e > plPlayerController.cacheAudioQa)) {
+            closestNumber = AudioQuality.k192.code;
+          }
+          firstAudio = audioList.firstWhere(
+            (e) => e.id == closestNumber,
+            orElse: () => audioList.first,
+          );
+        }
         audioUrl = VideoUtils.getCdnUrl(firstAudio.playUrls, isAudio: true);
         if (firstAudio.id case final int id?) {
           currentAudioQa = AudioQuality.fromCode(id);
@@ -1015,7 +1117,7 @@ class VideoDetailController extends GetxController
   // 设定字幕轨道
   Future<void> setSubtitle(int index) async {
     if (index <= 0) {
-      await plPlayerController.videoPlayerController?.setSubtitleTrack(.no());
+      await plPlayerController.videoPlayerController?.setSubtitle(null);
       vttSubtitlesIndex.value = index;
       return;
     }
@@ -1027,8 +1129,8 @@ class VideoDetailController extends GetxController
       if (subtitle.isData) {
         subUri = 'memory://$subUri';
       }
-      await plPlayerController.videoPlayerController?.setSubtitleTrack(
-        SubtitleTrack(subUri, sub.lanDoc, sub.lan, uri: true),
+      await plPlayerController.videoPlayerController?.setSubtitle(
+        MediaSubtitle(subUri, sub.lanDoc ?? sub.lan, sub.lan),
       );
       vttSubtitlesIndex.value = index;
     }
