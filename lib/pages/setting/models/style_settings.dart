@@ -95,12 +95,16 @@ List<SettingsModel> get styleSettings => [
       onTap: _showFontWeightDialog,
     ),
   ),
-  NormalModel(
-    title: '界面缩放',
-    getSubtitle: () => '当前缩放比例：${Pref.uiScale.toStringAsFixed(2)}',
-    leading: const Icon(Icons.zoom_in_outlined),
-    onTap: _showUiScaleDialog,
-  ),
+  // TV sizing is fixed by TvTheme.designScale; a user-set uiScale would
+  // desync MediaQuery from the video hardware-overlay ROI, so the setting is
+  // hidden on TV (and its binding mutations are guarded below).
+  if (!PlatformUtils.isTV)
+    NormalModel(
+      title: '界面缩放',
+      getSubtitle: () => '当前缩放比例：${Pref.uiScale.toStringAsFixed(2)}',
+      leading: const Icon(Icons.zoom_in_outlined),
+      onTap: _showUiScaleDialog,
+    ),
   NormalModel(
     title: '页面过渡动画',
     leading: const Icon(Icons.animation),
@@ -473,7 +477,10 @@ void _showUiScaleDialog(
             GStorage.setting.delete(SettingBoxKey.uiScale).whenComplete(() {
               setState();
               Get.appUpdate();
-              ScaledWidgetsFlutterBinding.instance.scaleFactor = 1.0;
+              // On TV the binding scale is pinned to 1.0 (see main.dart).
+              if (!PlatformUtils.isTV) {
+                ScaledWidgetsFlutterBinding.instance.scaleFactor = 1.0;
+              }
             });
           },
           child: const Text('重置'),
@@ -492,7 +499,10 @@ void _showUiScaleDialog(
               () {
                 setState();
                 Get.appUpdate();
-                ScaledWidgetsFlutterBinding.instance.scaleFactor = uiScale;
+                // On TV the binding scale is pinned to 1.0 (see main.dart).
+                if (!PlatformUtils.isTV) {
+                  ScaledWidgetsFlutterBinding.instance.scaleFactor = uiScale;
+                }
               },
             );
           },

@@ -23,6 +23,7 @@ import 'package:PiliPlus/pages/danmaku/danmaku_model.dart';
 import 'package:PiliPlus/pages/live_room/send_danmaku/view.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/media_kit_media_player.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:PiliPlus/services/service_locator.dart';
@@ -160,9 +161,12 @@ class LiveRoomController extends GetxController {
   void _startSizeSub() {
     if (isPortrait.value) return;
     _stopSizeSub();
-    _sizeSub = plPlayerController.videoPlayerController?.stream.size.listen(
-      _onSizeChanged,
-    );
+    // Video-size stream is mpv-only; on the AVPlay backend orientation stays as
+    // last known (no auto portrait/landscape switch).
+    final player = plPlayerController.videoPlayerController;
+    if (player is MediaKitMediaPlayer) {
+      _sizeSub = player.rawPlayer.stream.size.listen(_onSizeChanged);
+    }
   }
 
   void _stopSizeSub() {

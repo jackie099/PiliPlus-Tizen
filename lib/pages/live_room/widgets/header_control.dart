@@ -10,6 +10,7 @@ import 'package:PiliPlus/pages/setting/models/play_settings.dart'
     show showPlayerVolumeDialog;
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/media_kit_media_player.dart';
 import 'package:PiliPlus/plugin/pl_player/widgets/common_btn.dart';
 import 'package:PiliPlus/services/shutdown_timer_service.dart'
     show shutdownTimerService;
@@ -249,52 +250,59 @@ class _LiveHeaderControlState extends State<LiveHeaderControl>
                 iconSize: 18,
                 padding: .zero,
                 iconColor: Colors.white,
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    height: 35,
-                    onTap: _showLiveStreamDialog,
-                    child: const Row(
-                      spacing: 8,
-                      children: [
-                        Icon(Icons.alt_route, size: 17),
-                        Text('切换路线', style: TextStyle(fontSize: 14)),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    height: 35,
-                    child: const Row(
-                      spacing: 8,
-                      children: [
-                        Icon(Icons.info_outline, size: 17),
-                        Text('播放信息', style: TextStyle(fontSize: 14)),
-                      ],
-                    ),
-                    onTap: () => HeaderControlState.showPlayerInfo(
-                      context,
-                      player: player,
-                    ),
-                  ),
-                  if (PlatformUtils.isMobile)
+                itemBuilder: (context) {
+                  // 播放信息 / 播放器音量 read mpv-only properties; media_kit only.
+                  final rawPlayer = player is MediaKitMediaPlayer
+                      ? player.rawPlayer
+                      : null;
+                  return [
                     PopupMenuItem(
                       height: 35,
-                      child: Row(
+                      onTap: _showLiveStreamDialog,
+                      child: const Row(
                         spacing: 8,
                         children: [
-                          const Icon(Icons.volume_up, size: 17),
-                          Text(
-                            '播放器音量: ${player.getProperty('volume').subLength(3)}%',
-                            style: const TextStyle(fontSize: 14),
-                          ),
+                          Icon(Icons.alt_route, size: 17),
+                          Text('切换路线', style: TextStyle(fontSize: 14)),
                         ],
                       ),
-                      onTap: () => showPlayerVolumeDialog(
-                        context,
-                        () {},
-                        onChanged: player.setVolume,
-                      ),
                     ),
-                ],
+                    if (rawPlayer != null)
+                      PopupMenuItem(
+                        height: 35,
+                        child: const Row(
+                          spacing: 8,
+                          children: [
+                            Icon(Icons.info_outline, size: 17),
+                            Text('播放信息', style: TextStyle(fontSize: 14)),
+                          ],
+                        ),
+                        onTap: () => HeaderControlState.showPlayerInfo(
+                          context,
+                          player: rawPlayer,
+                        ),
+                      ),
+                    if (PlatformUtils.isMobile && rawPlayer != null)
+                      PopupMenuItem(
+                        height: 35,
+                        child: Row(
+                          spacing: 8,
+                          children: [
+                            const Icon(Icons.volume_up, size: 17),
+                            Text(
+                              '播放器音量: ${rawPlayer.getProperty('volume').subLength(3)}%',
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        ),
+                        onTap: () => showPlayerVolumeDialog(
+                          context,
+                          () {},
+                          onChanged: player.setVolume,
+                        ),
+                      ),
+                  ];
+                },
               ),
             ),
         ],

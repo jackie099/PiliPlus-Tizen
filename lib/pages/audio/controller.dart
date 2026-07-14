@@ -26,6 +26,8 @@ import 'package:PiliPlus/pages/sponsor_block/block_mixin.dart';
 import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/triple_mixin.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
+import 'package:PiliPlus/plugin/pl_player/engine/media_player_factory.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:PiliPlus/services/service_locator.dart';
@@ -70,7 +72,7 @@ class AudioController extends GetxController
 
   bool _hasInit = false;
   @override
-  Player? player;
+  AbstractMediaPlayer? player;
   late int cacheAudioQa;
 
   late bool isDragging = false;
@@ -181,7 +183,7 @@ class AudioController extends GetxController
   }
 
   bool isPlaying() {
-    return player?.state.playing ?? false;
+    return player?.playing ?? false;
   }
 
   Future<void>? onPlay() {
@@ -322,15 +324,21 @@ class AudioController extends GetxController
         // mpv cannot clear referer option
         headers: {'Referer': ?referer},
       )
-      ..open(Media(url, start: _start));
+      ..open(MediaSource(videoUri: url, start: _start));
     _start = null;
   }
 
   Future<void> _initPlayerIfNeeded() async {
     if (_hasInit) return;
+    // Tizen has no libmpv; creating a media_kit Player would crash. The audio
+    // page is a no-op on Tizen for now (TODO: route through the AVPlay backend).
+    if (PlatformUtils.isTizen) {
+      _hasInit = true;
+      return;
+    }
     _hasInit = true;
     assert(player == null, _subscriptions = null);
-    player = await Player.create(
+    final mkPlayer = await Player.create(
       configuration: PlayerConfiguration(
         options: {
           'volume': PlatformUtils.isDesktop
@@ -341,14 +349,15 @@ class AudioController extends GetxController
         },
       ),
     );
+    final AbstractMediaPlayer mediaPlayer = wrapMediaKit(mkPlayer, null);
+    player = mediaPlayer;
     if (isClosed) {
-      player!.dispose();
+      mediaPlayer.dispose();
       player = null;
       return;
     }
-    final stream = player!.stream;
     _subscriptions = [
-      stream.position.listen((position) {
+      mediaPlayer.positionStream.listen((position) {
         if (isDragging) return;
         final seconds = position.inSeconds;
         if (seconds != this.position.value) {
@@ -357,10 +366,10 @@ class AudioController extends GetxController
           videoPlayerServiceHandler?.onPositionChange(position);
         }
       }),
-      stream.duration.listen((duration) {
+      mediaPlayer.durationStream.listen((duration) {
         this.duration.value = duration.inSeconds;
       }),
-      stream.playing.listen((playing) {
+      mediaPlayer.playingStream.listen((playing) {
         final PlayerStatus playerStatus;
         if (playing) {
           animController.forward();
@@ -371,8 +380,8 @@ class AudioController extends GetxController
         }
         videoPlayerServiceHandler?.onStatusChange(playerStatus, false, false);
       }),
-      stream.completed.listen((completed) {
-        _videoDetailController?.playedTime = player!.state.duration;
+      mediaPlayer.completedStream.listen((completed) {
+        _videoDetailController?.playedTime = mediaPlayer.duration;
         videoPlayerServiceHandler?.onStatusChange(
           PlayerStatus.completed,
           false,
@@ -744,10 +753,10 @@ class AudioController extends GetxController
   BlockConfigMixin get blockConfig => this;
 
   @override
-  int get currPosInMilliseconds => player?.state.position.inMilliseconds ?? 0;
+  int get currPosInMilliseconds => player?.position.inMilliseconds ?? 0;
 
   @override
-  int? get timeLength => player?.state.duration.inMilliseconds ?? 0;
+  int? get timeLength => player?.duration.inMilliseconds ?? 0;
 
   @override
   Future<void>? seekTo(Duration duration, {required bool isSeek}) =>

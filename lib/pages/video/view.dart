@@ -52,6 +52,7 @@ import 'package:PiliPlus/services/shutdown_timer_service.dart'
     show shutdownTimerService;
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/android/bindings.g.dart';
+import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/extension/scroll_controller_ext.dart';
 import 'package:PiliPlus/utils/extension/theme_ext.dart';
 import 'package:PiliPlus/utils/image_utils.dart';
@@ -1222,40 +1223,56 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     onPopInvokedWithResult:
         videoDetailController.plPlayerController.onPopInvokedWithResult,
     child: Obx(
-      () =>
-          !videoDetailController.videoState.value ||
-              !videoDetailController.autoPlay ||
-              plPlayerController?.videoController == null
-          ? const SizedBox.shrink()
-          : PLVideoPlayer(
-              maxWidth: width,
-              maxHeight: height,
-              plPlayerController: plPlayerController!,
-              videoDetailController: videoDetailController,
-              introController: introController,
-              headerControl: HeaderControl(
-                key: videoDetailController.headerCtrKey,
-                isPortrait: isPortrait,
-                controller: videoDetailController.plPlayerController,
-                videoDetailCtr: videoDetailController,
-                heroTag: heroTag,
-              ),
-              danmuWidget: isPipMode && pipNoDanmaku
-                  ? null
-                  : Obx(
-                      () => PlDanmaku(
-                        key: ValueKey(videoDetailController.cid.value),
-                        isPipMode: isPipMode,
-                        cid: videoDetailController.cid.value,
-                        playerController: plPlayerController!,
-                        isFullScreen: plPlayerController!.isFullScreen.value,
-                        isFileSource: videoDetailController.isFileSource,
-                        size: Size(width, height),
+      () {
+        // Read these observables unconditionally so Obx stays reactive on every
+        // platform (an Obx builder that reads no observable throws "improper use
+        // of GetX"). On Tizen the media_kit videoController is always null (the
+        // AVPlay engine is used) and videoState/autoPlay can read false even while
+        // AVPlay is playing, so gate ONLY on the engine-agnostic
+        // videoPlayerController there — otherwise the whole player widget (and its
+        // hole-punch overlay) is never built and video is black.
+        final bool videoReady = videoDetailController.videoState.value;
+        final bool autoPlay = videoDetailController.autoPlay;
+        return (PlatformUtils.isTizen
+                // Build the player once the video is loaded (an observable, so
+                // Obx stays reactive). PLVideoPlayer's inner controllerListenable
+                // then reveals the VideoPlayer/Hole when the AVPlay controller is
+                // ready — don't gate on the non-observable videoPlayerController.
+                ? !videoReady
+                : !videoReady ||
+                      !autoPlay ||
+                      plPlayerController?.videoController == null)
+            ? const SizedBox.shrink()
+            : PLVideoPlayer(
+                maxWidth: width,
+                maxHeight: height,
+                plPlayerController: plPlayerController!,
+                videoDetailController: videoDetailController,
+                introController: introController,
+                headerControl: HeaderControl(
+                  key: videoDetailController.headerCtrKey,
+                  isPortrait: isPortrait,
+                  controller: videoDetailController.plPlayerController,
+                  videoDetailCtr: videoDetailController,
+                  heroTag: heroTag,
+                ),
+                danmuWidget: isPipMode && pipNoDanmaku
+                    ? null
+                    : Obx(
+                        () => PlDanmaku(
+                          key: ValueKey(videoDetailController.cid.value),
+                          isPipMode: isPipMode,
+                          cid: videoDetailController.cid.value,
+                          playerController: plPlayerController!,
+                          isFullScreen: plPlayerController!.isFullScreen.value,
+                          isFileSource: videoDetailController.isFileSource,
+                          size: Size(width, height),
+                        ),
                       ),
-                    ),
-              showEpisodes: showEpisodes,
-              showViewPoints: showViewPoints,
-            ),
+                showEpisodes: showEpisodes,
+                showViewPoints: showViewPoints,
+              );
+      },
     ),
   );
 

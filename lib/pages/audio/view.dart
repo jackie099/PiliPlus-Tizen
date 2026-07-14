@@ -19,6 +19,7 @@ import 'package:PiliPlus/pages/setting/models/play_settings.dart'
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/action_item.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart'
     show HeaderControlState;
+import 'package:PiliPlus/plugin/pl_player/engine/media_kit_media_player.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
 import 'package:PiliPlus/services/shutdown_timer_service.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
@@ -628,7 +629,9 @@ class _AudioPageState extends State<AudioPage> {
                   PageUtils.reportVideo(_controller.oid.toInt());
                 },
               ),
-              if (_controller.player case final player?) ...[
+              // 播放信息 / 播放器音量 read mpv-only properties; media_kit only.
+              if ((_controller.player as MediaKitMediaPlayer?)?.rawPlayer
+                  case final player?) ...[
                 ListTile(
                   dense: true,
                   leading: const Icon(Icons.info_outline, size: 20),

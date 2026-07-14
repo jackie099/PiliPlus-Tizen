@@ -109,6 +109,11 @@ class _GalleryViewerState extends State<GalleryViewer>
 
   Future<void> _initPlayer() async {
     assert(_player == null);
+    // Tizen has no libmpv; skip live-photo playback there rather than crash on
+    // media_kit Player.create (TODO: route through the AVPlay backend).
+    if (PlatformUtils.isTizen) {
+      return;
+    }
     final player = await Player.create();
     _videoController = await VideoController.create(player);
     if (!mounted) {
