@@ -90,7 +90,9 @@ Future<void> _initAppPath() async {
 
 void main() async {
   ScaledWidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
+  // Tizen has no libmpv/media_kit backend (video handled separately). Skipping
+  // avoids a native-load crash at boot.
+  if (!PlatformUtils.isTizen) MediaKit.ensureInitialized();
   await _initAppPath();
   try {
     await GStorage.init();
@@ -99,7 +101,12 @@ void main() async {
     if (kDebugMode) debugPrint('GStorage init error: $e');
     exit(0);
   }
-  ScaledWidgetsFlutterBinding.instance.scaleFactor = Pref.uiScale;
+  // TV: sizing is recalibrated in the design tokens (TvTheme.designScale);
+  // the binding must stay at 1.0 so MediaQuery and the AVPlay hardware-overlay
+  // ROI keep the device's native coordinate system.
+  ScaledWidgetsFlutterBinding.instance.scaleFactor = PlatformUtils.isTV
+      ? 1.0
+      : Pref.uiScale;
   await Future.wait([
     _initDownPath(),
     _initTmpPath(),
@@ -194,8 +201,9 @@ void main() async {
         format: DateFormatUtils.longFormatDs,
       ),
       'Commit Hash': BuildConfig.commitHash,
-      'MPV Api Version':
-          '${NativePlayer.apiVersion >> 16}.${NativePlayer.apiVersion & 0xFFFF}',
+      if (!PlatformUtils.isTizen)
+        'MPV Api Version':
+            '${NativePlayer.apiVersion >> 16}.${NativePlayer.apiVersion & 0xFFFF}',
     };
     final fileHandler = await JsonFileHandler.init();
 
@@ -294,7 +302,10 @@ class MyApp extends StatelessWidget {
   }
 
   static Widget _builder(BuildContext context, Widget? child) {
-    final uiScale = Pref.uiScale;
+    // TV: never compensate MediaQuery by uiScale — the video hardware-overlay
+    // ROI derives from real layout sizes, and TvTheme.designScale already
+    // handles TV UI sizing.
+    final uiScale = PlatformUtils.isTV ? 1.0 : Pref.uiScale;
     final mediaQuery = MediaQuery.of(context);
     final textScaler = TextScaler.linear(Pref.defaultTextScale);
     if (uiScale != 1.0) {
@@ -319,10 +330,23 @@ class MyApp extends StatelessWidget {
         child: child!,
       );
     }
-    if (PlatformUtils.isDesktop) {
+    if (PlatformUtils.isTV) {
+      // TV remote OK/Select emits LogicalKeyboardKey.select, which Flutter does
+      // not bind to ActivateIntent by default (issue #106817). A nested
+      // Shortcuts widget adds it while the ancestor WidgetsApp defaults still
+      // drive arrow-key focus traversal.
+      child = Shortcuts(
+        shortcuts: const <ShortcutActivator, Intent>{
+          SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.gameButtonA): ActivateIntent(),
+        },
+        child: child!,
+      );
+    }
+    if (PlatformUtils.isDesktop || PlatformUtils.isTV) {
       return BackDetector(
         onBack: _onBack,
-        child: child,
+        child: child!,
       );
     }
     return child;

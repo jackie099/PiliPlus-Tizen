@@ -319,6 +319,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  connectivity_plus_tizen:
+    dependency: "direct main"
+    description:
+      name: connectivity_plus_tizen
+      sha256: "9f0c14acdceebda77b0bca129b81dc53d0197845ca030032ab5d0198ec5837b3"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.0"
   convert:
     dependency: transitive
     description:
@@ -400,6 +408,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "8.1.0"
+  device_info_plus_tizen:
+    dependency: "direct main"
+    description:
+      name: device_info_plus_tizen
+      sha256: ab5ba568c8c8c3eba302fcc78db4ca2affd4da5243b09285834930c009f2652c
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.0"
   dio:
     dependency: "direct main"
     description:
@@ -733,6 +749,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_tizen:
+    dependency: transitive
+    description:
+      name: flutter_tizen
+      sha256: "5df51a022828127d8d3bf2af32e67b746b764b1209193148fd33b0d7b7c122a7"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.7"
   flutter_volume_controller:
     dependency: "direct main"
     description:
@@ -1318,6 +1342,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.3"
+  path_provider_tizen:
+    dependency: "direct main"
+    description:
+      name: path_provider_tizen
+      sha256: "1dcafe206f0cfe94931ea8a58fc1e99de53a656b66bd8a85977c8b6fb998fef2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.3.0"
   path_provider_windows:
     dependency: transitive
     description:
@@ -1590,6 +1622,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.4.2"
+  shared_preferences_tizen:
+    dependency: "direct main"
+    description:
+      name: shared_preferences_tizen
+      sha256: "0bb9e5d424570676d23729de251703126d9927016c2617543aa06f463f06401d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.3.3"
   shared_preferences_web:
     dependency: transitive
     description:
@@ -1708,6 +1748,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.11"
+  tizen_app_control:
+    dependency: transitive
+    description:
+      name: tizen_app_control
+      sha256: "1822a0815434db29b0ac3cf8c37c4d4ad33da08704f68701a926bc99550ccda1"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.3"
+  tizen_interop:
+    dependency: transitive
+    description:
+      name: tizen_interop
+      sha256: "46303c36a7e45491ce0149c77a3f54f3d57654938983c482ab0363a8ebe6ee27"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   tray_manager:
     dependency: "direct main"
     description:
@@ -1788,6 +1844,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.3.2"
+  url_launcher_tizen:
+    dependency: "direct main"
+    description:
+      name: url_launcher_tizen
+      sha256: a667a5664e9668505dcb8cf618064e3e3944bb351ef7e8d58ef9d5b59e6e8c36
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.5"
   url_launcher_web:
     dependency: transitive
     description:
@@ -1844,6 +1908,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  video_player_avplay:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: "617974aa218a731188311351f96929bda74b9855"
+      resolved-ref: "617974aa218a731188311351f96929bda74b9855"
+      url: "https://github.com/jackie099/video_player_avplay.git"
+    source: git
+    version: "0.8.14"
   visibility_detector:
     dependency: transitive
     description:
@@ -1876,6 +1949,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.1"
+  wakelock_plus_tizen:
+    dependency: "direct main"
+    description:
+      name: wakelock_plus_tizen
+      sha256: "3449ee9b08bc8625ecaa04fb409c9c7171034c15a352a7592bdf8105390225cd"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.1"
   watcher:
     dependency: transitive
     description:
@@ -1976,4 +2057,4 @@ packages:
     version: "3.1.3"
 sdks:
   dart: ">=3.12.0 <4.0.0"
-  flutter: "3.44.6"
+  flutter: ">=3.44.0"
