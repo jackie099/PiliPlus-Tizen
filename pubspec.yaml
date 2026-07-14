@@ -177,12 +177,16 @@ dependencies:
   connectivity_plus_tizen: ^1.3.0
   shared_preferences_tizen: ^2.3.3
   device_info_plus_tizen: ^1.4.0
-  # Fork of flutter-tizen's video_player_avplay 0.8.14 with the PiliPlus Tizen
-  # patch (route localhost-proxy URLs to the CAPI MediaPlayer backend).
+  # Fork of flutter-tizen/plugins carrying the `playerEngine` option proposed
+  # upstream in flutter-tizen/plugins#1064, which lets us force the
+  # general-purpose (CAPI MediaPlayer) engine for our localhost-proxy URLs via
+  # the public API. Reverts to the stock pub.dev package once the option is
+  # released upstream.
   video_player_avplay:
     git:
-      url: https://github.com/jackie099/video_player_avplay.git
-      ref: 617974aa218a731188311351f96929bda74b9855
+      url: https://github.com/jackie099/plugins.git
+      path: packages/video_player_avplay
+      ref: 7ffc99f76631d0f4551ec9da271afebab6ee69e7
 
 dependency_overrides:
   flutter_inappwebview_android:

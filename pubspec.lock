@@ -1911,12 +1911,12 @@ packages:
   video_player_avplay:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "617974aa218a731188311351f96929bda74b9855"
-      resolved-ref: "617974aa218a731188311351f96929bda74b9855"
-      url: "https://github.com/jackie099/video_player_avplay.git"
+      path: "packages/video_player_avplay"
+      ref: "7ffc99f76631d0f4551ec9da271afebab6ee69e7"
+      resolved-ref: "7ffc99f76631d0f4551ec9da271afebab6ee69e7"
+      url: "https://github.com/jackie099/plugins.git"
     source: git
-    version: "0.8.14"
+    version: "0.8.15"
   visibility_detector:
     dependency: transitive
     description:

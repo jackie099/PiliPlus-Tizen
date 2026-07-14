@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:video_player_avplay/video_player.dart';
 import 'package:video_player_avplay/video_player_platform_interface.dart'
-    show VideoFormat;
+    show VideoFormat, PlayerEngine;
 
 import 'abstract_media_player.dart';
 import 'bili_dash_proxy.dart';
@@ -286,6 +286,10 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       url,
       formatHint: format,
       httpHeaders: httpHeaders,
+      // All our media is served through the localhost DASH proxy; the
+      // adaptive-streaming engine fails to prepare those sources, so force the
+      // general-purpose engine (previously a native plugin patch).
+      playerEngine: PlayerEngine.general,
     );
     _controller = controller;
     _prev = null;
