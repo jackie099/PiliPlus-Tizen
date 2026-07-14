@@ -1,253 +1,102 @@
 <div align="center">
-    <img width="200" height="200" src="assets/images/logo/logo.png">
+    <img width="160" height="160" src="assets/images/logo/logo.png">
+    <h1>PiliPlus-Tizen</h1>
+    <p><b>A Samsung Tizen TV (D-pad) port of <a href="https://github.com/bggRGjQaUbCoE/PiliPlus">PiliPlus</a>, the Flutter Bilibili client.</b></p>
 </div>
 
+![platform](https://img.shields.io/badge/platform-Tizen%209.0-blue)
+![flutter](https://img.shields.io/badge/flutter--tizen-3.44-02569B)
+![license](https://img.shields.io/badge/license-GPL--3.0-green)
+![fork](https://img.shields.io/badge/fork%20of-PiliPlus-lightgrey)
 
+<p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 
-<div align="center">
-    <h1>PiliPlus</h1>
-<div align="center">
-    
-![GitHub repo size](https://img.shields.io/github/repo-size/bggRGjQaUbCoE/PiliPlus) 
-![GitHub Repo stars](https://img.shields.io/github/stars/bggRGjQaUbCoE/PiliPlus) 
-![GitHub all releases](https://img.shields.io/github/downloads/bggRGjQaUbCoE/PiliPlus/total) 
-</div>
-    <p>使用Flutter开发的BiliBili第三方客户端</p>
-    
-<img src="assets/screenshots/510shots_so.png" width="32%" alt="home" />
-<img src="assets/screenshots/174shots_so.png" width="32%" alt="home" />
-<img src="assets/screenshots/850shots_so.png" width="32%" alt="home" />
-<br/>
-<img src="assets/screenshots/main_screen.png" width="96%" alt="home" />
-<br/>
-</div>
+This is a fork of [**PiliPlus**](https://github.com/bggRGjQaUbCoE/PiliPlus) (a Flutter-based third-party Bilibili client) adapted to run on **Samsung Tizen smart TVs** via [`flutter-tizen`](https://github.com/flutter-tizen/flutter-tizen), driven entirely by the TV remote's **D-pad**. It has been developed and tested on a **Samsung S90F (77" 4K OLED, Tizen 9.0)**.
 
+The mobile/desktop targets from upstream are untouched — all TV code is additive and gated behind `PlatformUtils.isTizen`, so the same tree still builds for Android / iOS / Windows / Linux.
 
-<br/>
+---
 
-## 适配平台
+## Why a fork (the hard part)
 
-- [x] Android
-- [x] iOS
-- [x] Pad
-- [x] Windows
-- [x] Linux
+Tizen's Flutter embedder cannot use `media_kit` (upstream's video engine — no libmpv on Tizen), and the platform's native player (`video_player_avplay`, backed by the Tizen CAPI `MediaPlayer`) **cannot** play Bilibili's DASH streams directly:
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/piliplus.svg)](https://repology.org/project/piliplus/versions)
+1. **Split video + audio.** Bilibili DASH ships video and audio as two separate fMP4 URLs; the native player wants one source.
+2. **Mandatory `Referer`.** The Bilibili CDN returns `403` without `Referer: https://www.bilibili.com`, and the player drops custom request headers on the media socket.
+3. **No external HTTPS streaming.** PlusPlayer/CAPI cannot stream arbitrary external HTTPS reliably.
 
-## refactor
+The solution is a **Dart localhost reverse-proxy** ([`lib/plugin/pl_player/engine/bili_dash_proxy.dart`](lib/plugin/pl_player/engine/bili_dash_proxy.dart)) that:
 
-- [ ] gRPC [wip]
-- [x] 用户界面
-- [x] 其他
+- Serves a `127.0.0.1` URL to the native player (which it *can* stream).
+- Injects the `Referer` / `User-Agent` the player drops, and forwards `Range` requests so seeking works.
+- Synthesizes a truthful **static DASH `.mpd`** from the split streams, advertising the real codecs (HEVC / AV1 / FLAC / **E-AC-3**) so the decoder accepts them.
 
-## feat
+The rest of the port is a from-scratch **TV UI layer** ([`lib/tv/`](lib/tv/)) that reuses upstream's controllers and networking but replaces the touch chrome with a D-pad-navigable interface.
 
-- [x] 编辑动态
-- [x] DLNA 投屏
-- [x] 离线缓存/播放
-- [x] 移动端支持点击弹幕悬停，点赞、复制、举报 by [@My-Responsitories](https://github.com/My-Responsitories)
-- [x] 播放音频
-- [x] 跳过番剧片头/片尾
-- [x] 安卓端 `loudnorm` 适配 by [@My-Responsitories](https://github.com/My-Responsitories)
-- [x] Win/Mac 支持极验、短信登录 by [@My-Responsitories](https://github.com/My-Responsitories)
-- [x] 视频截取动图 by [@My-Responsitories](https://github.com/My-Responsitories)
-- [x] AI 原声翻译
-- [x] SuperChat
-- [x] 播放课堂视频
-- [x] 发起投票
-- [x] 发布动态/评论支持`富文本编辑`/`表情显示`/`@用户`
-- [x] 修改消息设置
-- [x] 修改聊天设置
-- [x] 展示折叠消息
-- [x] 查看用户图文
-- [x] 动态话题
-- [x] 直播分区
-- [x] 分享`视频`/`番剧`/`动态`/`专栏`/`直播`至消息
-- [x] 创建/修改/删除关注分组
-- [x] 移除粉丝
-- [x] 直播弹幕发送表情
-- [x] 收藏夹排序
-- [x] 稍后再看 ~~`未看`~~ / `未看完` / ~~`已看完`~~ 分类
-- [x] WebDAV 备份/恢复设置
-- [x] 保存评论/动态
-- [x] 高级弹幕 by [@My-Responsitories](https://github.com/My-Responsitories)
-- [x] 取消/置顶评论
-- [x] 记笔记
-- [x] 多账号支持 by [@My-Responsitories](https://github.com/My-Responsitories)
-- [x] 屏蔽带货动态/评论
-- [x] 互动视频
-- [x] 发评/动态反诈
-- [x] 高能进度条
-- [x] 滑动跳转预览视频缩略图
-- [x] Live Photo
-- [x] 复制/移动/排序收藏夹/稍后再看视频
-- [x] 超分辨率
-- [x] 合并弹幕
-- [x] 会员彩色弹幕
-- [x] 播放全部/继续播放/倒序播放
-- [x] Cookie登录
-- [x] 显示视频分段信息
-- [x] 调节字幕大小
-- [x] 调节全屏弹幕大小
-- [x] 收藏夹/稍后再看多选删除
-- [x] 搜索用户动态
-- [x] 直播弹幕
-- [x] 修改头像/用户名/签名/性别/生日
-- [x] 创建/编辑/删除收藏夹
-- [x] 评论楼中楼查看对话
-- [x] 评论楼中楼定位点击查看的评论
-- [x] 评论楼中楼按热度/时间排序
-- [x] 评论点踩
-- [x] 私信发图
-- [x] 投币动画
-- [x] 取消/追番，更新追番状态
-- [x] 取消/订阅合集
-- [x] SponsorBlock
-- [x] 显示视频完整合集
-- [x] 三连动画
-- [x] 番剧三连
-- [x] 带图评论
-- [x] 视频TAG
-- [x] 筛选搜索
-- [x] 转发动态
-- [x] 合集图片
-- [x] 删除/置顶/撤回私信
-- [x] 举报用户/评论/视频/动态
-- [x] 删除/发布/置顶文本/图片动态
-- [x] 其他
+---
 
-## opt
+## TV features
 
-- [x] 专栏界面
-- [x] 私信界面
-- [x] 收藏面板
-- [x] PIP
-- [x] 视频封面
-- [x] 回复界面
-- [x] 系统通知
-- [x] 评论显示
-- [x] 亮度调节
-- [x] 视频播放
-- [x] 视频staff
-- [x] 防止bottomsheet遮挡全屏视频
-- [x] 其他
+- **D-pad navigation** — home / trending / search / dynamics / user, a fullscreen video page, and a TV settings screen, all remote-driven.
+- **4K HEVC + HDR10** — auto-selects the highest playable tier on the S90F (HDR真彩·H.265). Dolby Vision (126) and 8K (127) are excluded — the S90F's decoder rejects 8K (`Not supported format`) and Samsung never licenses DV.
+- **Dolby Atmos (E-AC-3 / ec-3)** — proven to decode on the S90F. The proxy advertises `ec-3` at 48 kHz with the Dolby channel-configuration scheme (`F801` = 5.1) + the JOC `SupplementalProperty`, and an opt-in `preferDolbyAtmos` preference auto-selects the Atmos track on every video that carries one.
+- **Apple-TV-style scrubber** — Left/Right nudge a **visual** target (10s taps, hold to accelerate) on a scrub bar with a Bilibili **videoshot thumbnail preview** + target-time/delta; exactly **one** native seek commits on OK or after a short idle. (This replaced per-keypress seeking, which raced the AVPlay pipeline to the end.)
+- **CDN line picker + speed test** — Bilibili's per-object CDN throughput varies wildly; when a stream is on a slow mirror the player nudges you to switch lines (in-player and in settings), with a speed test against the *currently playing* stream.
+- **In-player options panel** — quality, audio quality, decode format, danmaku toggle, subtitles, chapters (view points), episode / 分P picker + prev/next, aspect ratio, playback speed/order, and like / favourite.
 
-## fix
+## Architecture
 
-- [x] 番剧分集点赞/投币/收藏
-- [x] bugs
+| Layer | Where | Notes |
+|------|-------|-------|
+| Tizen embedder & manifest | [`tizen/`](tizen/) | flutter-tizen project (`Runner.csproj`, `tizen-manifest.xml`), app icon |
+| Vendored native plugin | [`plugins/video_player_avplay/`](plugins/) | Tizen CAPI `MediaPlayer` backend (hole-punched hardware video overlay) |
+| Video engine | [`lib/plugin/pl_player/engine/`](lib/plugin/pl_player/engine/) | `AvplayMediaPlayer` + the `BiliDashProxy` + Tizen subtitle overlay |
+| TV UI | [`lib/tv/`](lib/tv/) | Home, search, video page, settings, the D-pad options panel |
+| Shared edits | `lib/pages/video/controller.dart`, `lib/plugin/pl_player/controller.dart`, … | additive, `PlatformUtils.isTizen`-guarded |
 
-<br/>
+Video renders on a **native hardware overlay** (hole-punched), so Flutter only draws the UI/danmaku on top — which is why the app ships with **Skia** (Impeller's GLES backend renders dense Chinese text noticeably softer, and it doesn't touch the hardware-video path anyway).
 
-## 功能
+## Build & run
 
-- [x] 推荐视频列表(app端)
-- [x] 最热视频列表
-- [x] 热门直播
-- [x] 番剧列表
-- [x] 屏蔽黑名单内用户视频
-- [x] 无痕模式（播放视为未登录）
-- [x] 游客模式（推荐视为未登录）
+Prerequisites: [`flutter-tizen`](https://github.com/flutter-tizen/flutter-tizen) (Flutter 3.44), the Tizen SDK, and a Tizen 9.0 TV in developer mode paired over `sdb`.
 
-- [x] 用户相关
-  - [x] 粉丝、关注用户、拉黑用户查看
-  - [x] 用户主页查看
-  - [x] 关注/取关用户
-  - [x] 离线缓存
-  - [x] 稍后再看
-  - [x] 观看记录
-  - [x] 我的收藏
-  - [x] 站内私信
-  
-- [x] 动态相关
-  - [x] 全部、投稿、番剧分类查看
-  - [x] 动态评论查看
-  - [x] 动态评论回复功能
+```bash
+# one-time: point sdb at the TV
+sdb connect <TV_IP>:26101
 
-- [x] 视频播放相关
-  - [x] 双击快进/快退
-  - [x] 双击播放/暂停
-  - [x] 垂直方向调节亮度/音量
-  - [x] 垂直方向上滑全屏、下滑退出全屏
-  - [x] 水平方向手势快进/快退
-  - [x] 全屏方向设置
-  - [x] 倍速选择/长按2倍速
-  - [x] 硬件加速（视机型而定）
-  - [x] 画质选择（高清画质未解锁）
-  - [x] 音质选择（视视频而定）
-  - [x] 解码格式选择（视视频而定）
-  - [x] 弹幕
-  - [x] 字幕
-  - [x] 记忆播放
-  - [x] 视频比例：高度/宽度适应、填充、包含等
-     
-- [x] 搜索相关
-  - [x] 热搜
-  - [x] 搜索历史
-  - [x] 默认搜索词
-  - [x] 投稿、番剧、直播间、用户搜索
-  - [x] 视频搜索排序、按时长筛选
-    
-- [x] 视频详情页相关
-  - [x] 视频选集(分p)切换
-  - [x] 点赞、投币、收藏/取消收藏
-  - [x] 相关视频查看
-  - [x] 评论用户身份标识
-  - [x] 评论(排序)查看、二楼评论查看
-  - [x] 主楼、二楼评论回复功能
-  - [x] 评论点赞
-  - [x] 评论笔记图片查看、保存
+# debug (Skia — for development)
+export LD_LIBRARY_PATH="$HOME/projects/tizen/tizen-libs:$LD_LIBRARY_PATH"
+flutter-tizen run -d <TV_IP>:26101 --dart-define=IS_TIZEN=true
 
-- [x] 设置相关
-  - [x] 画质、音质、解码方式预设      
-  - [x] 图片质量设定
-  - [x] 主题模式：亮色/暗色/跟随系统
-  - [x] 震动反馈(可选)
-  - [x] 高帧率
-  - [x] 自动全屏
-  - [x] 横屏适配
-- [ ] 等等
+# release (AOT-optimized, Skia — what you install day-to-day)
+flutter-tizen run --release -d <TV_IP>:26101 --dart-define=IS_TIZEN=true
+# or build a standalone TPK:
+flutter-tizen build tpk --release --dart-define=IS_TIZEN=true
+```
 
-<br/>
+`--dart-define=IS_TIZEN=true` sets the compile-time `PlatformUtils.isTizen` flag that routes into the TV UI and the AVPlay engine. Do **not** pass `--enable-impeller` (see the Skia note above).
 
-## 下载
+## Known limitations
 
-可以通过右侧release进行下载或拉取代码到本地进行编译
+- **8K** is excluded — the S90F decoder rejects it (it's a 4K-class decoder).
+- **Dolby Vision** video is excluded (Samsung licensing); HDR10 is used instead. Atmos audio is independent and works on DV uploads.
+- **Atmos passthrough** to an eARC soundbar depends on the TV's audio settings (eARC = Auto, Digital Output = Pass-Through, Atmos Compatibility = On); the TV's built-in speakers decode the 5.1 core.
+- Tested only on the **S90F / Tizen 9.0**; other Tizen TVs are untried.
 
-<br/>
+---
 
-## 声明
+## 声明 / Disclaimer
 
-此项目（PiliPlus）是个人为了兴趣而开发，仅用于学习和测试，请于下载后24小时内删除。
-所用API皆从官方网站收集，不提供任何破解内容。
-在此致敬原作者：[guozhigq/pilipala](https://github.com/guozhigq/pilipala)
-在此致敬上游作者：[orz12/PiliPalaX](https://github.com/orz12/PiliPalaX)
-本仓库做了更激进的修改，感谢原作者的开源精神。
+此项目基于 [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) 二次开发，仅用于学习与个人测试，请于下载后 24 小时内删除。所用 API 皆从官方网站收集，不提供任何破解内容。
 
-感谢使用
+Upstream lineage: [bggRGjQaUbCoE/PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) → [orz12/PiliPalaX](https://github.com/orz12/PiliPalaX) → [guozhigq/pilipala](https://github.com/guozhigq/pilipala). Thanks to the original authors for their open-source work.
 
+## 致谢 / Acknowledgements
 
-<br/>
-
-## 致谢
-
+- Upstream [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) and its lineage
+- [flutter-tizen](https://github.com/flutter-tizen/flutter-tizen) and `video_player_avplay`
 - [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)
-- [flutter_meedu_videoplayer](https://github.com/zezo357/flutter_meedu_videoplayer)
-- [media-kit](https://github.com/media-kit/media-kit)
-- [dio](https://pub.dev/packages/dio)
-- 等等
 
-<br/>
-<br/>
-<br/>
+## License
 
-## Star History
-
-<a href="https://www.star-history.com/#bggRGjQaUbCoE/PiliPlus&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date" />
- </picture>
-</a>
+[GPL-3.0](LICENSE), inherited from upstream PiliPlus.
