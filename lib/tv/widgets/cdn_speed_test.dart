@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:PiliPlus/http/browser_ua.dart';
 import 'package:PiliPlus/http/constants.dart';
 import 'package:PiliPlus/http/video.dart';

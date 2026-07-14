@@ -11,7 +11,7 @@ import 'abstract_media_player.dart';
 import 'bili_dash_proxy.dart';
 
 /// [AbstractMediaPlayer] implementation backed by the `video_player_avplay`
-/// plugin (Samsung Tizen TV / AVPlay + plusplayer).
+/// plugin's general-purpose CAPI `MediaPlayer` engine (Samsung Tizen TV / AVPlay).
 ///
 /// The AVPlay [VideoPlayerController] exposes its whole state through a single
 /// [VideoPlayerValue] carried by a [ValueNotifier]. This class bridges that
@@ -44,7 +44,7 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
 
   /// Notifies the render layer the instant a new controller is created — BEFORE
   /// it finishes initializing — so the `VideoPlayer` widget (and thus the native
-  /// hole-punch display window) is mounted while PlusPlayer's PrepareAsync runs.
+  /// hole-punch display window) is mounted while the engine's async prepare runs.
   /// Without an existing display, prepare never completes and initialize() hangs.
   final ValueNotifier<VideoPlayerController?> controllerListenable =
       ValueNotifier<VideoPlayerController?>(null);

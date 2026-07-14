@@ -30,10 +30,11 @@ BiliDashProxy get _dashProxy => _sharedDashProxy ??= BiliDashProxy();
 ///
 /// The returned player wraps `video_player_avplay` and is wired to the shared
 /// [BiliDashProxy] so dual-stream DASH sources can be muxed on the fly and the
-/// mandatory `Referer` injected. Note: the plugin is patched (see
-/// `tizen/src/video_player_tizen_plugin.cc`) so localhost-proxy urls use its
-/// CAPI `MediaPlayer` backend — which prepares/plays them and renders via the
-/// Flutter-window overlay — instead of PlusPlayer, whose prepare fails on them.
+/// mandatory `Referer` injected. Localhost-proxy urls are routed to the
+/// plugin's general-purpose (CAPI `MediaPlayer`) engine via the typed
+/// `PlayerEngine.general` option — which prepares/plays them and renders via
+/// the Flutter-window overlay — whereas the adaptive-streaming engine's
+/// prepare fails on them.
 /// The proxy spins up its server on demand from [AbstractMediaPlayer.open].
 AbstractMediaPlayer createTizenPlayer() {
   return AvplayMediaPlayer(proxy: _dashProxy);

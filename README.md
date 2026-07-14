@@ -49,7 +49,7 @@ The rest of the port is a from-scratch **TV UI layer** ([`lib/tv/`](lib/tv/)) th
 | Layer | Where | Notes |
 |------|-------|-------|
 | Tizen embedder & manifest | [`tizen/`](tizen/) | flutter-tizen project (`Runner.csproj`, `tizen-manifest.xml`), app icon |
-| Vendored native plugin | [`plugins/video_player_avplay/`](plugins/) | Tizen CAPI `MediaPlayer` backend (hole-punched hardware video overlay) |
+| Native video plugin | [`video_player_avplay` fork](https://github.com/jackie099/plugins) (git dep) | CAPI `MediaPlayer` engine (hole-punched HW overlay), selected via the `playerEngine` option — proposed upstream in [flutter-tizen/plugins#1064](https://github.com/flutter-tizen/plugins/pull/1064) |
 | Video engine | [`lib/plugin/pl_player/engine/`](lib/plugin/pl_player/engine/) | `AvplayMediaPlayer` + the `BiliDashProxy` + Tizen subtitle overlay |
 | TV UI | [`lib/tv/`](lib/tv/) | Home, search, video page, settings, the D-pad options panel |
 | Shared edits | `lib/pages/video/controller.dart`, `lib/plugin/pl_player/controller.dart`, … | additive, `PlatformUtils.isTizen`-guarded |
