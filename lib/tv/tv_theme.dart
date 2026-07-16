@@ -159,6 +159,13 @@ abstract final class TvTheme {
     vertical: 14 * designScale,
   );
 
+  /// Leading-icon size / gap inside a pill button.
+  static const double buttonIconSize = 28 * designScale;
+  static const double buttonIconGap = 10 * designScale;
+
+  /// A pill button's fill while focused (base fill is [chipSurface]).
+  static const Color buttonFocusFill = Color(0x24FFFFFF);
+
   /// Gap between a status message and its action button.
   static const double stateActionGap = 32 * designScale;
 
@@ -243,8 +250,24 @@ abstract final class TvTheme {
   static const Duration overlayEnterDuration = rowAppearDuration; // 240ms
   static const Duration overlayExitDuration = Duration(milliseconds: 160);
 
-  /// Gap between the finished-card action pill and the related-videos row.
+  /// Gap between the finished-card action pill and the related-videos row (and
+  /// the pill↔hint gap on the actions line).
   static const double endCardActionGap = 24 * designScale;
+  static const double endCardStatusGap = 16 * designScale; // label ↔ title
+  static const double endCardStatusBottomGap = 18 * designScale; // status → actions
+  static const double endCardBottomInset = 48 * designScale;
+
+  /// Black bottom gradient under the player chrome / end card (shared with the
+  /// control bar), grounding it against the video.
+  static const Gradient playerBottomGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Colors.transparent, Color(0xE6000000)],
+  );
+
+  /// Fraction of the screen height the end-card bottom gradient covers.
+  /// Dimensionless: never scaled.
+  static const double endCardGradientHeightFactor = 0.56;
 
   // ------------------------------------------------------- 评论 (comments) --
   /// Right-hand comments panel, sharing the options-panel surface language.
@@ -419,6 +442,15 @@ abstract final class TvTheme {
   static const TextStyle buttonLabel = TextStyle(
     fontSize: 24 * designScale,
     height: 1.2,
+    fontWeight: FontWeight.w600,
+    color: textPrimary,
+  );
+
+  /// Now-playing title, shared by the control bar and the end card so they
+  /// read identically.
+  static const TextStyle playerTitle = TextStyle(
+    fontSize: 30 * designScale,
+    height: 1.25,
     fontWeight: FontWeight.w600,
     color: textPrimary,
   );

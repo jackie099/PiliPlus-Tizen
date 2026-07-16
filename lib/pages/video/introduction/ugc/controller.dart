@@ -735,13 +735,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
       final PlayRepeat playRepeat =
           videoDetailCtr.plPlayerController.playRepeat;
 
-      if (episodes.isEmpty) {
-        if (playRepeat == PlayRepeat.autoPlayRelated &&
-            videoDetailCtr.plPlayerController.showRelatedVideo) {
-          return _peekRelated();
-        }
-        return null;
-      }
+      if (episodes.isEmpty) return null;
 
       final int currentIndex = episodes.indexWhere(
         (e) =>
@@ -761,9 +755,6 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
         }
         if (playRepeat == PlayRepeat.listCycle) {
           nextIndex = 0;
-        } else if (playRepeat == PlayRepeat.autoPlayRelated &&
-            videoDetailCtr.plPlayerController.showRelatedVideo) {
-          return _peekRelated();
         } else {
           return null;
         }
@@ -779,23 +770,6 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
     } catch (_) {
       return null;
     }
-  }
-
-  BaseEpisodeItem? _peekRelated() {
-    if (!Get.isRegistered<RelatedController>(tag: heroTag)) return null;
-    final relatedCtr = Get.find<RelatedController>(tag: heroTag);
-    if (relatedCtr.loadingState.value case Success(:final response)) {
-      if (response?.firstOrNull case final first?) {
-        return BaseEpisodeItem(
-          aid: first.aid,
-          bvid: first.bvid,
-          cid: first.cid,
-          cover: first.cover,
-          title: first.title,
-        );
-      }
-    }
-    return null;
   }
 
   bool playRelated() {

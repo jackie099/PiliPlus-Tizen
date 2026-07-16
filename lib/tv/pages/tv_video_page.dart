@@ -10,9 +10,12 @@ import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/local/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/pgc/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/controller.dart';
+import 'package:PiliPlus/pages/video/related/controller.dart';
 import 'package:PiliPlus/models_new/video/video_detail/episode.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
+import 'package:PiliPlus/tv/utils/tv_open.dart';
 import 'package:PiliPlus/tv/widgets/tv_comments_panel.dart';
+import 'package:PiliPlus/tv/widgets/tv_end_card.dart';
 import 'package:PiliPlus/tv/widgets/tv_up_next_card.dart';
 import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
@@ -88,6 +91,10 @@ class _TvVideoPageState extends State<TvVideoPage> {
   /// The "接下来" (up-next) auto-play card shown on completion, or null.
   final Rxn<TvUpNextInfo> _upNext = Rxn<TvUpNextInfo>();
   BaseEpisodeItem? _pendingNext;
+
+  /// The 已播放完毕 end card (重新播放 + 相关视频), for 播完暂停 / no-next.
+  final RxBool _endCardVisible = false.obs;
+  RelatedController? _relatedCtr;
 
   /// The video uploader's mid, to badge their comments with `UP`.
   int get _upMid {
@@ -249,6 +256,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
     _focusNode.dispose();
     _controlsVisible.close();
     _commentsVisible.close();
+    _endCardVisible.close();
     _upNext.close();
     _optionsVisible.close();
     _scrubbing.close();
@@ -312,7 +320,9 @@ class _TvVideoPageState extends State<TvVideoPage> {
       _handleCompletion();
     }
     if (status.isPlaying) {
-      _dismissUpNext(); // a new video started — clear any lingering card
+      // A new video started — clear any lingering end-of-video overlays.
+      _dismissUpNext();
+      _dismissEndCard();
       if (_controlsVisible.value) {
         _scheduleHide();
       }
@@ -333,7 +343,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
       case PlayRepeat.singleCycle:
         player.play(repeat: true);
       case PlayRepeat.pause:
-        break;
+        _showEndCard();
       case PlayRepeat.listOrder:
       case PlayRepeat.listCycle:
       case PlayRepeat.autoPlayRelated:
@@ -342,10 +352,35 @@ class _TvVideoPageState extends State<TvVideoPage> {
         if (next != null) {
           _pendingNext = next;
           _upNext.value = TvUpNextInfo.from(next);
-        } else if (intro is UgcIntroController) {
-          intro.nextPlay();
+        } else {
+          // Nothing to auto-advance to → the end card (重新播放 + 相关视频).
+          _showEndCard();
         }
     }
+  }
+
+  /// Shows the end card and ensures related videos are fetched for it.
+  void _showEndCard() {
+    final related = Get.isRegistered<RelatedController>(tag: heroTag)
+        ? Get.find<RelatedController>(tag: heroTag)
+        : Get.put(RelatedController(autoQuery: false), tag: heroTag);
+    if (related.loadingState.value is! Success) related.queryData();
+    _relatedCtr = related;
+    _endCardVisible.value = true;
+  }
+
+  void _dismissEndCard() {
+    if (_endCardVisible.value) {
+      _endCardVisible.value = false;
+      // The card's focused node is about to be disposed; return focus to the
+      // page so the D-pad keeps working.
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _replayFromEnd() {
+    _dismissEndCard();
+    plPlayerController?.play(repeat: true);
   }
 
   /// Plays the previewed next item (OK or countdown end).
@@ -359,7 +394,12 @@ class _TvVideoPageState extends State<TvVideoPage> {
 
   void _dismissUpNext() {
     _pendingNext = null;
-    if (_upNext.value != null) _upNext.value = null;
+    if (_upNext.value != null) {
+      _upNext.value = null;
+      // The card's focused node is about to be disposed; return focus to the
+      // page so the D-pad keeps working.
+      _focusNode.requestFocus();
+    }
   }
 
   void _showControls() {
@@ -727,6 +767,18 @@ class _TvVideoPageState extends State<TvVideoPage> {
       return KeyEventResult.ignored;
     }
 
+    if (_endCardVisible.value) {
+      // The card's 重新播放 pill / related row handle OK and arrows; Back
+      // dismisses the card back to the finished frame.
+      if (key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.browserBack ||
+          key == LogicalKeyboardKey.escape) {
+        if (isDown) _dismissEndCard();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
     if (_optionsVisible.value) {
       // The options panel's own Focus handles navigation before events reach
       // this node; backstop Back here (e.g. for the frame before the panel
@@ -908,6 +960,41 @@ class _TvVideoPageState extends State<TvVideoPage> {
                   ),
                 );
               }),
+              // 已播放完毕 end card (播完暂停 / no next video).
+              Obx(
+                () => _endCardVisible.value && _relatedCtr != null
+                    ? Positioned.fill(
+                        child: ColoredBox(
+                          color: TvTheme.overlayScrim,
+                          child: Stack(
+                            children: [
+                              const Align(
+                                alignment: Alignment.bottomCenter,
+                                child: FractionallySizedBox(
+                                  widthFactor: 1,
+                                  heightFactor:
+                                      TvTheme.endCardGradientHeightFactor,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: TvTheme.playerBottomGradient,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              TvEndCard(
+                                title:
+                                    introController.videoDetail.value.title ??
+                                    '',
+                                related: _relatedCtr!,
+                                onReplay: _replayFromEnd,
+                                onOpenRelated: TvOpen.openHorizontalVideo,
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
               // 评论 (comments) side panel.
               Obx(
                 () => _commentsVisible.value
@@ -1089,7 +1176,9 @@ class _TvVideoPageState extends State<TvVideoPage> {
       right: 0,
       bottom: 0,
       child: Obx(() {
-        final visible = _controlsVisible.value && _upNext.value == null;
+        final visible = _controlsVisible.value &&
+            _upNext.value == null &&
+            !_endCardVisible.value;
         return IgnorePointer(
           child: AnimatedSlide(
             offset: visible ? Offset.zero : const Offset(0, 0.2),
@@ -1110,11 +1199,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
   Widget _buildControlBarContent() {
     return DecoratedBox(
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.transparent, Color(0xE6000000)],
-        ),
+        gradient: TvTheme.playerBottomGradient,
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -1148,9 +1233,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
                       _title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TvTheme.cardTitle.copyWith(
-                        fontSize: 30 * TvTheme.designScale,
-                      ),
+                      style: TvTheme.playerTitle,
                     ),
                   ),
                 ),

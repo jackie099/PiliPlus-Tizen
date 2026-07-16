@@ -64,6 +64,7 @@ class _TvUpNextCardState extends State<TvUpNextCard>
     vsync: this,
     duration: TvTheme.upNextCountdown,
   );
+  final FocusNode _focusNode = FocusNode(debugLabel: 'TvUpNext');
   bool _frozen = false;
 
   @override
@@ -76,11 +77,17 @@ class _TvUpNextCardState extends State<TvUpNextCard>
         }
       })
       ..forward();
+    // The card mounts into an overlay while the page's root Focus already holds
+    // focus, so `autofocus` is a no-op — grab focus explicitly.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -108,7 +115,7 @@ class _TvUpNextCardState extends State<TvUpNextCard>
   @override
   Widget build(BuildContext context) {
     return TvFocusable(
-      autofocus: true,
+      focusNode: _focusNode,
       onSelect: widget.onPlayNow,
       onKeyEvent: _onKey,
       borderRadius: TvTheme.cardRadius,
