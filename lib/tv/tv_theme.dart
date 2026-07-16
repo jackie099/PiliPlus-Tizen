@@ -246,6 +246,35 @@ abstract final class TvTheme {
   /// Gap between the finished-card action pill and the related-videos row.
   static const double endCardActionGap = 24 * designScale;
 
+  // ------------------------------------------------------- 评论 (comments) --
+  /// Right-hand comments panel, sharing the options-panel surface language.
+  static const Color commentsPanelSurface = Color(0xF2161923);
+  static const double commentsPanelWidth = 720 * designScale;
+  static const double commentsPanelFeather = 120 * designScale;
+  static const double commentsPanelPadding = 40 * designScale;
+  static const BorderRadius commentsPanelRadius = BorderRadius.horizontal(
+    left: Radius.circular(24 * designScale),
+  );
+
+  static const EdgeInsets commentRowPadding = EdgeInsets.symmetric(
+    horizontal: 20 * designScale,
+    vertical: 18 * designScale,
+  );
+  static const BorderRadius commentRowRadius = BorderRadius.all(
+    Radius.circular(12 * designScale),
+  );
+
+  /// A subtle focus for list rows (vs the 1.08 card pop).
+  static const double focusScaleRow = 1.02;
+  static const Color rowFocusFill = Color(0xFF262B38);
+  static const Color hairline = Color(0x1FFFFFFF);
+
+  static const double commentAvatarSize = 64 * designScale;
+  static const double commentAvatarSub = 48 * designScale; // 楼中楼
+  static const double commentAvatarGap = 20 * designScale;
+  static const double commentIndent = 88 * designScale; // 楼中楼 indent
+  static const Color mentionColor = Color(0xFF7B9EE0);
+
   // ----------------------------------------------------------- typography --
   static const TextStyle brand = TextStyle(
     fontSize: 32 * designScale,
@@ -335,6 +364,43 @@ abstract final class TvTheme {
     height: 1.0,
     fontWeight: FontWeight.w700,
     color: Colors.white,
+  );
+
+  /// Comment author name.
+  static const TextStyle commentName = TextStyle(
+    fontSize: 22 * designScale,
+    height: 1.2,
+    fontWeight: FontWeight.w600,
+    color: Color(0xFFDEE1E8),
+  );
+
+  /// Comment body text — the legibility core (generous line height for 10 ft).
+  static const TextStyle commentBody = TextStyle(
+    fontSize: 26 * designScale,
+    height: 1.5,
+    color: textPrimary,
+  );
+
+  /// Slightly smaller body for nested (楼中楼) replies.
+  static const TextStyle commentBodySub = TextStyle(
+    fontSize: 24 * designScale,
+    height: 1.5,
+    color: textPrimary,
+  );
+
+  /// Comment meta line (like · time · location · N 回复).
+  static const TextStyle commentMeta = TextStyle(
+    fontSize: 18 * designScale,
+    height: 1.2,
+    color: textSecondary,
+  );
+
+  /// Sort-toggle segment label (热门 / 最新).
+  static const TextStyle sortSegLabel = TextStyle(
+    fontSize: 20 * designScale,
+    height: 1.2,
+    fontWeight: FontWeight.w600,
+    color: textPrimary,
   );
 
   static const TextStyle durationBadge = TextStyle(

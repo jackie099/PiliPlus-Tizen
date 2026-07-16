@@ -58,6 +58,7 @@ class TvPlayerOptions extends StatefulWidget {
     required this.videoDetailController,
     required this.introController,
     required this.onClose,
+    this.onOpenComments,
   });
 
   final PlPlayerController plPlayerController;
@@ -67,6 +68,9 @@ class TvPlayerOptions extends StatefulWidget {
   /// universal; arbitrary-jump goes through the UGC/PGC `onChangeEpisode`.
   final CommonIntroController introController;
   final VoidCallback onClose;
+
+  /// Opens the read-only comments panel; null when the video has no replies.
+  final VoidCallback? onOpenComments;
 
   /// Friendly codec label for the on-screen readouts, mapping the play-url
   /// codec ids ([VideoDecodeFormatType]) to household names.
@@ -339,6 +343,13 @@ class _TvPlayerOptionsState extends State<TvPlayerOptions> {
           onSelect: _toggleDanmaku,
         ),
       ),
+      if (widget.onOpenComments case final open?)
+        (n) => TvOptionRow(
+          focusNode: n,
+          label: '评论',
+          value: '查看',
+          onSelect: open,
+        ),
       // Engagement — clean API toggles that keep the panel open to show the new
       // state (no mobile sheet/page: those aren't D-pad navigable). 投币 is
       // omitted everywhere (it needs a 1/2-coin selection page).
@@ -354,7 +365,7 @@ class _TvPlayerOptionsState extends State<TvPlayerOptions> {
             focusNode: n,
             label: '点赞',
             value: intro.hasLike.value ? '已赞' : '赞',
-            onSelect: () => intro.actionLikeVideo(),
+            onSelect: intro.actionLikeVideo,
           ),
         ),
       // 收藏: the generic actionFavVideo is correct ONLY for UGC. PGC/paid-course

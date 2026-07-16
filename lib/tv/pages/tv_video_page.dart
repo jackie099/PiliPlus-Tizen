@@ -12,6 +12,7 @@ import 'package:PiliPlus/pages/video/introduction/pgc/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/controller.dart';
 import 'package:PiliPlus/models_new/video/video_detail/episode.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
+import 'package:PiliPlus/tv/widgets/tv_comments_panel.dart';
 import 'package:PiliPlus/tv/widgets/tv_up_next_card.dart';
 import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
@@ -82,10 +83,19 @@ class _TvVideoPageState extends State<TvVideoPage> {
 
   final RxBool _controlsVisible = false.obs;
   final RxBool _optionsVisible = false.obs;
+  final RxBool _commentsVisible = false.obs;
 
   /// The "接下来" (up-next) auto-play card shown on completion, or null.
   final Rxn<TvUpNextInfo> _upNext = Rxn<TvUpNextInfo>();
   BaseEpisodeItem? _pendingNext;
+
+  /// The video uploader's mid, to badge their comments with `UP`.
+  int get _upMid {
+    final intro = introController;
+    return intro is UgcIntroController
+        ? intro.videoDetail.value.owner?.mid ?? 0
+        : 0;
+  }
 
   Timer? _hideTimer;
   final FocusNode _focusNode = FocusNode(debugLabel: 'TvVideoPage');
@@ -238,6 +248,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
     _landingTimer?.cancel();
     _focusNode.dispose();
     _controlsVisible.close();
+    _commentsVisible.close();
     _upNext.close();
     _optionsVisible.close();
     _scrubbing.close();
@@ -704,6 +715,18 @@ class _TvVideoPageState extends State<TvVideoPage> {
       return KeyEventResult.ignored;
     }
 
+    if (_commentsVisible.value) {
+      // The panel's rows / sort handle navigation and 楼中楼 Back themselves;
+      // backstop Back here to close the whole panel.
+      if (key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.browserBack ||
+          key == LogicalKeyboardKey.escape) {
+        if (isDown) _commentsVisible.value = false;
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
     if (_optionsVisible.value) {
       // The options panel's own Focus handles navigation before events reach
       // this node; backstop Back here (e.g. for the frame before the panel
@@ -857,6 +880,9 @@ class _TvVideoPageState extends State<TvVideoPage> {
                         videoDetailController: videoDetailController,
                         introController: introController,
                         onClose: _closeOptions,
+                        onOpenComments: videoDetailController.showReply
+                            ? _openComments
+                            : null,
                       )
                     : const SizedBox.shrink(),
               ),
@@ -882,11 +908,31 @@ class _TvVideoPageState extends State<TvVideoPage> {
                   ),
                 );
               }),
+              // 评论 (comments) side panel.
+              Obx(
+                () => _commentsVisible.value
+                    ? TvCommentsPanel(
+                        controller: Get.find<VideoReplyController>(
+                          tag: heroTag,
+                        ),
+                        oid: videoDetailController.aid,
+                        replyType: videoDetailController.videoType.replyType,
+                        upMid: _upMid,
+                        onClose: () => _commentsVisible.value = false,
+                      )
+                    : const SizedBox.shrink(),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// Opens the read-only comments panel (only when the video has replies).
+  void _openComments() {
+    _closeOptions();
+    _commentsVisible.value = true;
   }
 
   /// The exact widget the mobile page embeds (see its `plPlayer()`), minus the

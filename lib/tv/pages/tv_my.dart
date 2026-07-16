@@ -1,4 +1,3 @@
-import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
 import 'package:PiliPlus/common/widgets/route_aware_mixin.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/user.dart';
@@ -11,6 +10,8 @@ import 'package:PiliPlus/tv/models/tv_video_data.dart';
 import 'package:PiliPlus/tv/pages/tv_login.dart';
 import 'package:PiliPlus/tv/tv_theme.dart';
 import 'package:PiliPlus/tv/utils/tv_open.dart';
+import 'package:PiliPlus/tv/widgets/tv_avatar.dart';
+import 'package:PiliPlus/tv/widgets/tv_chip.dart';
 import 'package:PiliPlus/tv/widgets/tv_continue_row.dart';
 import 'package:PiliPlus/tv/widgets/tv_data_video_card.dart';
 import 'package:PiliPlus/tv/widgets/tv_feed_grid.dart' show TvLoadingView, TvStatusView;
@@ -290,7 +291,11 @@ class _TvMyState extends State<TvMy> with RouteAware, RouteAwareMixin {
         ),
         child: Row(
           children: [
-            _avatar(face),
+            TvAvatar(
+              face: face,
+              size: TvTheme.profileAvatarSize,
+              iconSize: TvTheme.profileAvatarIconSize,
+            ),
             const SizedBox(width: TvTheme.profileAvatarGap),
             Expanded(
               child: Column(
@@ -309,11 +314,11 @@ class _TvMyState extends State<TvMy> with RouteAware, RouteAwareMixin {
                       ),
                       if (level != null) ...[
                         const SizedBox(width: TvTheme.profileChipGap),
-                        _chip('Lv$level'),
+                        TvChip('Lv$level'),
                       ],
                       if (isVip) ...[
                         const SizedBox(width: TvTheme.profileChipGap),
-                        _chip('大会员', vip: true),
+                        const TvChip('大会员', vip: true),
                       ],
                     ],
                   ),
@@ -328,49 +333,6 @@ class _TvMyState extends State<TvMy> with RouteAware, RouteAwareMixin {
         ),
       );
     });
-  }
-
-  Widget _avatar(String face) {
-    return ClipOval(
-      child: SizedBox(
-        width: TvTheme.profileAvatarSize,
-        height: TvTheme.profileAvatarSize,
-        child: face.isNotEmpty
-            ? NetworkImgLayer(
-                src: face,
-                width: TvTheme.profileAvatarSize,
-                height: TvTheme.profileAvatarSize,
-                borderRadius: BorderRadius.zero,
-              )
-            : const ColoredBox(
-                color: TvTheme.surface,
-                child: Icon(
-                  Icons.person_rounded,
-                  size: TvTheme.profileAvatarIconSize,
-                  color: TvTheme.textSecondary,
-                ),
-              ),
-      ),
-    );
-  }
-
-  Widget _chip(String label, {bool vip = false}) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: vip ? TvTheme.vipChipSurface : TvTheme.chipSurface,
-        borderRadius: TvTheme.badgeRadius,
-      ),
-      child: Padding(
-        padding: TvTheme.badgePadding,
-        child: Text(
-          label,
-          style: TvTheme.durationBadge.copyWith(
-            fontWeight: FontWeight.w600,
-            color: vip ? TvTheme.brandPink : TvTheme.textSecondary,
-          ),
-        ),
-      ),
-    );
   }
 
   // --------------------------------------------------------------- logged out
