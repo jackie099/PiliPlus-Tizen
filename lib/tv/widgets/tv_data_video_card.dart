@@ -1,16 +1,16 @@
-import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
 import 'package:PiliPlus/tv/focus/tv_focusable.dart';
 import 'package:PiliPlus/tv/models/tv_video_data.dart';
 import 'package:PiliPlus/tv/tv_theme.dart';
+import 'package:PiliPlus/tv/widgets/tv_card_cover.dart';
 import 'package:flutter/material.dart';
 
 /// Large 16:9 video card for the TV grid, driven by the feed-agnostic
-/// [TvVideoData] adapter (hot / search / dynamics feeds).
+/// [TvVideoData] adapter (hot / search / dynamics / history feeds).
 ///
-/// Visual twin of the recommend feed's TvVideoCard: cover with a bottom
-/// gradient scrim and duration badge, then a two-line title and an
-/// uploader + view/danmaku meta row.
-class TvDataVideoCard extends StatelessWidget {
+/// Cover (with progress / resume treatment) comes from [TvCardCover]; below it
+/// a two-line title and an uploader + stats row. History-sourced cards show
+/// the last-watched time in place of the (absent) view/danmaku stats.
+class TvDataVideoCard extends StatefulWidget {
   const TvDataVideoCard({
     super.key,
     required this.data,
@@ -27,12 +27,21 @@ class TvDataVideoCard extends StatelessWidget {
   final FocusOnKeyEventCallback? onKeyEvent;
 
   @override
+  State<TvDataVideoCard> createState() => _TvDataVideoCardState();
+}
+
+class _TvDataVideoCardState extends State<TvDataVideoCard> {
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
+    final data = widget.data;
     return TvFocusable(
-      onSelect: onSelect,
-      autofocus: autofocus,
-      focusNode: focusNode,
-      onKeyEvent: onKeyEvent,
+      onSelect: widget.onSelect,
+      onFocusChange: (focused) => setState(() => _focused = focused),
+      autofocus: widget.autofocus,
+      focusNode: widget.focusNode,
+      onKeyEvent: widget.onKeyEvent,
       borderRadius: TvTheme.cardRadius,
       child: ClipRRect(
         borderRadius: TvTheme.cardRadius,
@@ -41,8 +50,8 @@ class TvDataVideoCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildCover(),
-              Expanded(child: _buildInfo()),
+              TvCardCover(data: data, focused: _focused),
+              Expanded(child: _buildInfo(data)),
             ],
           ),
         ),
@@ -50,52 +59,7 @@ class TvDataVideoCard extends StatelessWidget {
     );
   }
 
-  Widget _buildCover() {
-    return AspectRatio(
-      aspectRatio: 16 / 9,
-      child: LayoutBuilder(
-        builder: (context, constraints) => Stack(
-          fit: StackFit.expand,
-          children: [
-            NetworkImgLayer(
-              src: data.cover,
-              width: constraints.maxWidth,
-              height: constraints.maxHeight,
-              borderRadius: BorderRadius.zero,
-            ),
-            // Bottom scrim keeps the duration badge legible on any cover.
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0.62, 1],
-                  colors: [Colors.transparent, Color(0xB3000000)],
-                ),
-              ),
-            ),
-            if (data.durationText case final durationText?)
-              Positioned(
-                right: TvTheme.badgeInsetRight,
-                bottom: TvTheme.badgeInsetBottom,
-                child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    color: Color(0x8A000000),
-                    borderRadius: TvTheme.badgeRadius,
-                  ),
-                  child: Padding(
-                    padding: TvTheme.badgePadding,
-                    child: Text(durationText, style: TvTheme.durationBadge),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfo() {
+  Widget _buildInfo(TvVideoData data) {
     return Padding(
       padding: TvTheme.cardPadding,
       child: Column(
@@ -110,28 +74,45 @@ class TvDataVideoCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: TvTheme.cardTitleGap),
-          _buildMetaRow(),
+          _buildMetaRow(data),
         ],
       ),
     );
   }
 
-  /// Uploader + trailing stats, overflow-proof at any card width: the
-  /// uploader ellipsizes via [Expanded], while the stats cluster is capped
-  /// to a fraction of the row and scales down via [FittedBox] (instead of
-  /// pushing the row past its bounds) when the numbers run long.
-  Widget _buildMetaRow() {
+  /// Uploader + a trailing cluster, overflow-proof at any card width: the
+  /// uploader ellipsizes via [Expanded], while the trailing cluster is capped
+  /// to a fraction of the row and scales down via [FittedBox] when it runs
+  /// long. The trailing cluster is the view/danmaku stats when present, else
+  /// the history "last watched" time.
+  Widget _buildMetaRow(TvVideoData data) {
     final stats = <Widget>[
       if (data.viewText case final viewText?)
         _buildStat(Icons.play_arrow_rounded, viewText),
       if (data.danmuText case final danmuText?)
         _buildStat(Icons.subtitles_outlined, danmuText),
     ];
+
+    Widget? trailing;
+    if (stats.isNotEmpty) {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < stats.length; i++) ...[
+            if (i > 0) const SizedBox(width: TvTheme.metaGap),
+            stats[i],
+          ],
+        ],
+      );
+    } else if (data.viewAtText case final viewAtText?) {
+      trailing = Text(viewAtText, maxLines: 1, style: TvTheme.cardMeta);
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Leave the uploader at least ~1/3 of the row before the stats
-        // start shrinking.
-        final double statsMaxWidth = constraints.maxWidth > TvTheme.metaGap
+        // Leave the uploader at least ~1/3 of the row before the trailing
+        // cluster starts shrinking.
+        final double trailingMaxWidth = constraints.maxWidth > TvTheme.metaGap
             ? (constraints.maxWidth - TvTheme.metaGap) * 0.68
             : 0;
         return Row(
@@ -144,22 +125,14 @@ class TvDataVideoCard extends StatelessWidget {
                 style: TvTheme.cardMeta,
               ),
             ),
-            if (stats.isNotEmpty) ...[
+            if (trailing != null) ...[
               const SizedBox(width: TvTheme.metaGap),
               ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: statsMaxWidth),
+                constraints: BoxConstraints(maxWidth: trailingMaxWidth),
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (var i = 0; i < stats.length; i++) ...[
-                        if (i > 0) const SizedBox(width: TvTheme.metaGap),
-                        stats[i],
-                      ],
-                    ],
-                  ),
+                  child: trailing,
                 ),
               ),
             ],

@@ -2,6 +2,7 @@ import 'package:PiliPlus/tv/focus/tv_focusable.dart';
 import 'package:PiliPlus/tv/pages/tv_dynamics.dart';
 import 'package:PiliPlus/tv/pages/tv_home.dart';
 import 'package:PiliPlus/tv/pages/tv_hot.dart';
+import 'package:PiliPlus/tv/pages/tv_my.dart';
 import 'package:PiliPlus/tv/pages/tv_search.dart';
 import 'package:PiliPlus/tv/pages/tv_settings.dart';
 import 'package:PiliPlus/tv/tv_theme.dart';
@@ -37,9 +38,17 @@ class _TvMainState extends State<TvMain> {
     _TvTab(label: '推荐', builder: (_) => const TvHome()),
     _TvTab(label: '热门', builder: (_) => const TvHot()),
     _TvTab(label: '动态', builder: (_) => const TvDynamics()),
+    _TvTab(label: '我的', builder: (_) => const TvMy()),
     _TvTab(label: '搜索', builder: (_) => const TvSearch()),
     _TvTab(label: '设置', builder: (_) => const TvSettings()),
   ];
+
+  void _selectTab(int index) {
+    setState(() {
+      _index = index;
+      _builtTabs.add(index);
+    });
+  }
 
   int _index = 0;
 
@@ -151,10 +160,7 @@ class _TvMainState extends State<TvMain> {
       padding: const EdgeInsets.only(right: 20 * TvTheme.designScale),
       child: TvFocusable(
         focusNode: _tabNodes[index],
-        onSelect: () => setState(() {
-          _index = index;
-          _builtTabs.add(index);
-        }),
+        onSelect: () => _selectTab(index),
         onFocusChange: (focused) => _onTabFocusChange(index, focused),
         borderRadius: TvTheme.tabRadius,
         focusScale: TvTheme.focusScaleSmall,
@@ -173,7 +179,7 @@ class _TvMainState extends State<TvMain> {
             child: Text(
               _tabs[index].label,
               style: selected
-                  ? TvTheme.tabLabel
+                  ? TvTheme.tabLabel.copyWith(color: TvTheme.brandPink)
                   : TvTheme.tabLabel.copyWith(color: TvTheme.textSecondary),
             ),
           ),

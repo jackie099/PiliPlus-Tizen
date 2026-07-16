@@ -99,6 +99,9 @@ abstract final class TvTheme {
   static const double gridTopPadding = 20 * designScale;
   static const double gridBottomPadding = 56 * designScale;
 
+  /// Thickness of the "continue watching" progress bar along a card's cover.
+  static const double progressBarHeight = 5 * designScale;
+
   /// Height of the text block under a card's 16:9 cover, in design px:
   /// 10 + two title lines (2 x 21 x 1.25) + 6 + meta line (18 x 1.2) + 10,
   /// with a little slack absorbed by the title's Expanded. Scales with the
@@ -159,6 +162,64 @@ abstract final class TvTheme {
   /// Gap between a status message and its action button.
   static const double stateActionGap = 32 * designScale;
 
+  // ------------------------------------------- continue watching / history --
+  /// Icon size of the ✓ on a "已看完" (finished) badge; optically matches the
+  /// 16-px badge font.
+  static const double badgeIconSize = 16 * designScale;
+
+  /// Bottom inset of the resume badge when it sits above the progress bar
+  /// (8-px standard inset + the 5-px bar would collide).
+  static const double badgeInsetBottomOverBar = 12 * designScale;
+
+  /// Focus-only "resume" glyph centered on a history cover: a flat dark disc
+  /// with a play arrow. Flat paints stay crisp under Skia.
+  static const double resumeGlyphSize = 80 * designScale;
+  static const double resumeGlyphIconSize = 48 * designScale;
+  static const Color resumeGlyphColor = Color(0xB3000000);
+
+  /// Fade-out of the resume glyph when a card loses focus (faster than the
+  /// spring-in so it disappears cleanly).
+  static const Duration glyphFadeOutDuration = Duration(milliseconds: 120);
+
+  /// Hero ("继续观看") row card: a larger 16:9 cover than the grid card, with a
+  /// single-line title + resume line beneath.
+  static const double heroCardWidth = 400 * designScale;
+  static const double heroCardInfoHeight = 78 * designScale;
+
+  /// Fixed-width trailing "查看全部" card that ends the hero row.
+  static const double viewAllCardWidth = 200 * designScale;
+
+  /// Vertical padding around the hero row's horizontal list — headroom for the
+  /// focus pop (half the 1.08 growth + a little slack).
+  static const double heroRowOverscan = 18 * designScale;
+
+  /// Section header ("继续观看" / "为你推荐") vertical rhythm on the home page.
+  static const double rowHeaderTopGap = 20 * designScale;
+  static const double rowHeaderBottomGap = 8 * designScale;
+  static const double sectionGap = 28 * designScale;
+
+  /// Home continue-watching row fade-in when it resolves (no slide/shimmer).
+  static const Duration rowAppearDuration = Duration(milliseconds: 240);
+
+  /// Max in-progress items shown in the home continue-watching row. A count,
+  /// not a dimension: never scaled.
+  static const int continueRowMaxItems = 12;
+
+  // -------------------------------------------------------- 我的 (My) page --
+  /// Profile band: circular avatar + name/level/vip chips + a stats line.
+  /// A passive banner (not focusable) when logged in.
+  static const double profileAvatarSize = 96 * designScale;
+  static const double profileAvatarIconSize = 48 * designScale;
+  static const double profileAvatarGap = 28 * designScale;
+  static const double profileHeaderTopGap = 12 * designScale;
+  static const double profileHeaderBottomGap = 4 * designScale;
+  static const double profileChipGap = 14 * designScale;
+  static const double profileMetaGap = 10 * designScale;
+
+  /// Level chip fill; the 大会员 chip fill (only when vipStatus == 1).
+  static const Color chipSurface = Color(0x14FFFFFF);
+  static const Color vipChipSurface = Color(0x26FB7299);
+
   // ----------------------------------------------------------- typography --
   static const TextStyle brand = TextStyle(
     fontSize: 32 * designScale,
@@ -183,6 +244,45 @@ abstract final class TvTheme {
 
   static const TextStyle cardMeta = TextStyle(
     fontSize: 18 * designScale,
+    height: 1.2,
+    color: textSecondary,
+  );
+
+  /// Home-page section header ("继续观看" / "为你推荐").
+  static const TextStyle sectionHeader = TextStyle(
+    fontSize: 28 * designScale,
+    height: 1.2,
+    fontWeight: FontWeight.w700,
+    color: textPrimary,
+  );
+
+  /// Single-line title on the larger hero (继续观看) card.
+  static const TextStyle heroTitle = TextStyle(
+    fontSize: 22 * designScale,
+    height: 1.25,
+    fontWeight: FontWeight.w600,
+    color: textPrimary,
+  );
+
+  /// Label of the trailing "查看全部" card in the hero row.
+  static const TextStyle viewAllLabel = TextStyle(
+    fontSize: 20 * designScale,
+    height: 1.2,
+    fontWeight: FontWeight.w500,
+    color: textSecondary,
+  );
+
+  /// 我的-page profile name.
+  static const TextStyle profileName = TextStyle(
+    fontSize: 34 * designScale,
+    height: 1.2,
+    fontWeight: FontWeight.w700,
+    color: textPrimary,
+  );
+
+  /// 我的-page stats line (关注 / 粉丝 / 动态).
+  static const TextStyle profileMeta = TextStyle(
+    fontSize: 20 * designScale,
     height: 1.2,
     color: textSecondary,
   );
