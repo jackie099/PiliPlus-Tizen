@@ -712,6 +712,92 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
     }
   }
 
+  /// Resolves the item [nextPlay] would advance to, WITHOUT playing it, so a
+  /// TV "接下来" (up-next) card can preview it. Returns null when the next
+  /// action would be a same-video replay or there is nothing to play.
+  BaseEpisodeItem? peekNext([bool skipPart = false]) {
+    try {
+      final List<BaseEpisodeItem> episodes = <BaseEpisodeItem>[];
+      bool isPart = false;
+      final videoDetail = this.videoDetail.value;
+
+      if (!skipPart && (videoDetail.pages?.length ?? 0) > 1) {
+        isPart = true;
+        episodes.addAll(videoDetail.pages!);
+      } else if (videoDetailCtr.isPlayAll) {
+        episodes.addAll(videoDetailCtr.mediaList);
+      } else if (videoDetail.ugcSeason != null) {
+        for (final section in videoDetail.ugcSeason!.sections!) {
+          episodes.addAll(section.episodes!);
+        }
+      }
+
+      final PlayRepeat playRepeat =
+          videoDetailCtr.plPlayerController.playRepeat;
+
+      if (episodes.isEmpty) {
+        if (playRepeat == PlayRepeat.autoPlayRelated &&
+            videoDetailCtr.plPlayerController.showRelatedVideo) {
+          return _peekRelated();
+        }
+        return null;
+      }
+
+      final int currentIndex = episodes.indexWhere(
+        (e) =>
+            e.cid ==
+            (skipPart
+                ? videoDetail.isPageReversed
+                      ? videoDetail.pages!.last.cid
+                      : videoDetail.pages!.first.cid
+                : cid.value),
+      );
+      int nextIndex = currentIndex + 1;
+
+      if (nextIndex >= episodes.length) {
+        if (isPart &&
+            (videoDetailCtr.isPlayAll || videoDetail.ugcSeason != null)) {
+          return peekNext(true);
+        }
+        if (playRepeat == PlayRepeat.listCycle) {
+          nextIndex = 0;
+        } else if (playRepeat == PlayRepeat.autoPlayRelated &&
+            videoDetailCtr.plPlayerController.showRelatedVideo) {
+          return _peekRelated();
+        } else {
+          return null;
+        }
+      }
+
+      int? nextCid = episodes[nextIndex].cid;
+      while (nextCid == null) {
+        nextIndex++;
+        if (nextIndex >= episodes.length) return null;
+        nextCid = episodes[nextIndex].cid;
+      }
+      return nextCid != cid.value ? episodes[nextIndex] : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  BaseEpisodeItem? _peekRelated() {
+    if (!Get.isRegistered<RelatedController>(tag: heroTag)) return null;
+    final relatedCtr = Get.find<RelatedController>(tag: heroTag);
+    if (relatedCtr.loadingState.value case Success(:final response)) {
+      if (response?.firstOrNull case final first?) {
+        return BaseEpisodeItem(
+          aid: first.aid,
+          bvid: first.bvid,
+          cid: first.cid,
+          cover: first.cover,
+          title: first.title,
+        );
+      }
+    }
+    return null;
+  }
+
   bool playRelated() {
     RelatedController relatedCtr;
     if (Get.isRegistered<RelatedController>(tag: heroTag)) {

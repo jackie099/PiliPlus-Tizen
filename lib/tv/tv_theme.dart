@@ -220,6 +220,32 @@ abstract final class TvTheme {
   static const Color chipSurface = Color(0x14FFFFFF);
   static const Color vipChipSurface = Color(0x26FB7299);
 
+  // --------------------------------------------- player end-of-video overlays --
+  /// Scrim laid over the final frame while an end-of-video overlay is up
+  /// (same value as the loading scrim).
+  static const Color overlayScrim = Color(0x99000000);
+
+  /// "接下来" (Up-Next) auto-play card, bottom-right anchored.
+  static const Color upNextSurface = Color(0xF21B1E27); // surface @ 95%
+  static const double upNextWidth = 700 * designScale;
+  static const double upNextPadding = 20 * designScale;
+  static const double upNextInset = 64 * designScale; // = screenPadding
+  static const double upNextThumbWidth = 300 * designScale;
+  static const double upNextGap = 20 * designScale;
+
+  /// Countdown ring on the Up-Next thumbnail (disc reuses the resume glyph).
+  static const double upNextRingSize = resumeGlyphSize; // 80
+  static const double upNextRingStroke = 6 * designScale;
+  static const Color upNextRingTrack = Color(0x40FFFFFF);
+  static const Duration upNextCountdown = Duration(seconds: 5);
+
+  /// Enter/exit motion shared by the end-of-video overlays.
+  static const Duration overlayEnterDuration = rowAppearDuration; // 240ms
+  static const Duration overlayExitDuration = Duration(milliseconds: 160);
+
+  /// Gap between the finished-card action pill and the related-videos row.
+  static const double endCardActionGap = 24 * designScale;
+
   // ----------------------------------------------------------- typography --
   static const TextStyle brand = TextStyle(
     fontSize: 32 * designScale,
@@ -285,6 +311,30 @@ abstract final class TvTheme {
     fontSize: 20 * designScale,
     height: 1.2,
     color: textSecondary,
+  );
+
+  /// "接下来" kicker over the Up-Next card.
+  static const TextStyle upNextKicker = TextStyle(
+    fontSize: 20 * designScale,
+    height: 1.2,
+    fontWeight: FontWeight.w700,
+    color: brandPink,
+  );
+
+  /// Up-Next next-video title (two lines).
+  static const TextStyle upNextTitle = TextStyle(
+    fontSize: 24 * designScale,
+    height: 1.3,
+    fontWeight: FontWeight.w600,
+    color: textPrimary,
+  );
+
+  /// Remaining-seconds number inside the countdown ring.
+  static const TextStyle upNextRingNumber = TextStyle(
+    fontSize: 32 * designScale,
+    height: 1.0,
+    fontWeight: FontWeight.w700,
+    color: Colors.white,
   );
 
   static const TextStyle durationBadge = TextStyle(

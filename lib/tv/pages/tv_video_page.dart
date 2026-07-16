@@ -10,6 +10,9 @@ import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/local/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/pgc/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/controller.dart';
+import 'package:PiliPlus/models_new/video/video_detail/episode.dart';
+import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
+import 'package:PiliPlus/tv/widgets/tv_up_next_card.dart';
 import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/pages/video/widgets/header_control.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
@@ -79,6 +82,11 @@ class _TvVideoPageState extends State<TvVideoPage> {
 
   final RxBool _controlsVisible = false.obs;
   final RxBool _optionsVisible = false.obs;
+
+  /// The "接下来" (up-next) auto-play card shown on completion, or null.
+  final Rxn<TvUpNextInfo> _upNext = Rxn<TvUpNextInfo>();
+  BaseEpisodeItem? _pendingNext;
+
   Timer? _hideTimer;
   final FocusNode _focusNode = FocusNode(debugLabel: 'TvVideoPage');
 
@@ -230,6 +238,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
     _landingTimer?.cancel();
     _focusNode.dispose();
     _controlsVisible.close();
+    _upNext.close();
     _optionsVisible.close();
     _scrubbing.close();
     _scrubTargetMs.close();
@@ -285,8 +294,14 @@ class _TvVideoPageState extends State<TvVideoPage> {
   }
 
   /// Pins the control bar while paused/completed; re-arms auto-hide on play.
+  /// On completion, hands off to [_handleCompletion] (播放顺序 → replay / 接下来
+  /// / stop).
   void _statusListener(PlayerStatus status) {
+    if (status.isCompleted) {
+      _handleCompletion();
+    }
     if (status.isPlaying) {
+      _dismissUpNext(); // a new video started — clear any lingering card
       if (_controlsVisible.value) {
         _scheduleHide();
       }
@@ -294,6 +309,46 @@ class _TvVideoPageState extends State<TvVideoPage> {
       _hideTimer?.cancel();
       _controlsVisible.value = true;
     }
+  }
+
+  /// Video finished: honor the 播放顺序 ([PlayRepeat]) setting. Single-cycle
+  /// replays; the autoplay modes show the 接下来 card for the next 分P/合集
+  /// episode (or advance silently via the engine when there's no rich
+  /// preview); 播完暂停 stays on the finished frame with the control bar pinned.
+  void _handleCompletion() {
+    final player = plPlayerController;
+    if (player == null) return;
+    switch (player.playRepeat) {
+      case PlayRepeat.singleCycle:
+        player.play(repeat: true);
+      case PlayRepeat.pause:
+        break;
+      case PlayRepeat.listOrder:
+      case PlayRepeat.listCycle:
+      case PlayRepeat.autoPlayRelated:
+        final intro = introController;
+        final next = intro is UgcIntroController ? intro.peekNext() : null;
+        if (next != null) {
+          _pendingNext = next;
+          _upNext.value = TvUpNextInfo.from(next);
+        } else if (intro is UgcIntroController) {
+          intro.nextPlay();
+        }
+    }
+  }
+
+  /// Plays the previewed next item (OK or countdown end).
+  void _playPendingNext() {
+    final item = _pendingNext;
+    _dismissUpNext();
+    if (item != null && introController is UgcIntroController) {
+      (introController as UgcIntroController).onChangeEpisode(item);
+    }
+  }
+
+  void _dismissUpNext() {
+    _pendingNext = null;
+    if (_upNext.value != null) _upNext.value = null;
   }
 
   void _showControls() {
@@ -567,8 +622,9 @@ class _TvVideoPageState extends State<TvVideoPage> {
         height: 214 * ds,
         imageCache: playerCtr.previewCache,
         onSetSize: (xs, ys) {
-          response.imgXSize = xs;
-          response.imgYSize = ys;
+          response
+            ..imgXSize = xs
+            ..imgYSize = ys;
         },
         isMounted: () => mounted,
       );
@@ -635,6 +691,18 @@ class _TvVideoPageState extends State<TvVideoPage> {
     final key = event.logicalKey;
     final isDown = event is KeyDownEvent;
     final isDownOrRepeat = isDown || event is KeyRepeatEvent;
+
+    if (_upNext.value != null) {
+      // The card (a focused TvFocusable) handles OK / arrows itself; backstop
+      // Back here to dismiss the up-next overlay.
+      if (key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.browserBack ||
+          key == LogicalKeyboardKey.escape) {
+        if (isDown) _dismissUpNext();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
 
     if (_optionsVisible.value) {
       // The options panel's own Focus handles navigation before events reach
@@ -792,6 +860,28 @@ class _TvVideoPageState extends State<TvVideoPage> {
                       )
                     : const SizedBox.shrink(),
               ),
+              // "接下来" (up-next) auto-play overlay over the dimmed final frame.
+              Obx(() {
+                final info = _upNext.value;
+                if (info == null) return const SizedBox.shrink();
+                return Positioned.fill(
+                  child: ColoredBox(
+                    color: TvTheme.overlayScrim,
+                    child: Stack(
+                      children: [
+                        Positioned(
+                          right: TvTheme.upNextInset,
+                          bottom: TvTheme.upNextInset,
+                          child: TvUpNextCard(
+                            info: info,
+                            onPlayNow: _playPendingNext,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
             ],
           ),
         ),
@@ -953,7 +1043,7 @@ class _TvVideoPageState extends State<TvVideoPage> {
       right: 0,
       bottom: 0,
       child: Obx(() {
-        final visible = _controlsVisible.value;
+        final visible = _controlsVisible.value && _upNext.value == null;
         return IgnorePointer(
           child: AnimatedSlide(
             offset: visible ? Offset.zero : const Offset(0, 0.2),
