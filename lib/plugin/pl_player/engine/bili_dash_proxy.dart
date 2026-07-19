@@ -26,6 +26,18 @@ import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
 const bool kBiliNativeDash =
     bool.fromEnvironment('BILI_NATIVE_DASH', defaultValue: false);
 
+/// Diagnostic (native mode only): emit a VIDEO-ONLY single-AdaptationSet
+/// manifest — drop the audio track. Bilibili's separate video+audio forces
+/// Samsung's `GstDashSrc` into a per-track branch that connects
+/// `need-data-video`/`-audio` signals its own class never registered (a bug in
+/// the bundled `libgstdash`), so prepare collapses. A single pad instead takes
+/// the working generic `need-data` path. This isolates TOPOLOGY (dual-pad) from
+/// ADDRESSING (byte ranges). Build with `--dart-define=BILI_NATIVE_VIDEO_ONLY=true`.
+/// If it PLAYS, the dual-pad wiring is the sole wall and a native-video +
+/// side-channel-audio hybrid is viable; it is a diagnostic, not a product.
+const bool kBiliNativeVideoOnly =
+    bool.fromEnvironment('BILI_NATIVE_VIDEO_ONLY', defaultValue: false);
+
 /// A localhost reverse-proxy that adapts Bilibili media streams for the Samsung
 /// TV video engine (`video_player_avplay`'s CAPI `MediaPlayer` backend).
 ///
@@ -548,10 +560,11 @@ class BiliDashProxy {
     final String audioUrl = kBiliNativeDash
         ? (entry.audioUri ?? '$_base/seg/$token/a')
         : '$_base/seg/$token/a';
-    final bool hasAudio = entry.audioUri != null;
+    final bool hasAudio = entry.audioUri != null && !kBiliNativeVideoOnly;
     if (kBiliNativeDash) {
       debugPrint(
-        '[BILI-NATIVE-DASH] manifest BaseURLs -> v=$videoUrl'
+        '[BILI-NATIVE-DASH] manifest BaseURLs'
+        '${kBiliNativeVideoOnly ? ' (VIDEO-ONLY)' : ''} -> v=$videoUrl'
         '${hasAudio ? ' a=$audioUrl' : ''}',
       );
       debugPrint(

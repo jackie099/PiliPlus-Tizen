@@ -1,3 +1,34 @@
+# ⛔ VERDICT (2026-07-19): native DASH playback of Bilibili is INFEASIBLE on this engine
+
+The Referer mechanism **works** (patched `libdash` → native engine fetches Bilibili
+CDN segments directly, no 403, bytes reach the decoders — proven on-device). But
+the native engine **cannot PREPARE** Bilibili's streams:
+
+- Samsung's closed `libgstdash` `GstDashSrc` has a **stream-start-ordering bug** on
+  the **byte-range single-file** path (`SegmentList`/`SegmentBase`): it pushes
+  buffers/caps before emitting `stream-start` → caps rejected → `GST_IS_CAPS`/
+  `GST_IS_CLOCK` NULL → prepare never completes → `setVolume`/`pause` throw.
+- **Fails even for a single video stream** (`--dart-define=BILI_NATIVE_VIDEO_ONLY=true`),
+  so it is NOT the dual video+audio topology.
+- Our manifest is **byte-perfect** (verified against the real CDN file). Ruled out:
+  DRM (clear → drm_type=0), the `need-data-video` "invalid signal" (benign), cert.
+- Dailymotion works because it feeds **separate-file `SegmentTemplate`** (different,
+  working `GstDashSrc` path). Bilibili serves one file per stream → byte-range only
+  → always hits the bug. The engine-accepted shape needs per-fragment URLs = a Dart
+  byte-pump (defeats the goal).
+
+**→ Keep the existing `PlayerEngine.general` byte-pump for Bilibili separate-A/V.**
+The only zero-byte avenue left is a second binary patch to `libgstdash` to inject the
+missing `stream-start` event — deep/high-risk, future only. This branch stays a
+flag-gated (default-OFF) spike + the proven `libdash` patch tooling.
+
+On-device log capture that works on this retail S90F (dlog disabled): push
+`/home/owner/share/tmp/sdk_tools/<appid>.rpm` with `--tizen-logging-port P`, `sdb
+forward tcp:P tcp:P`, launch via **`sdb shell 0 execute <appid>`** (NOT `sdb launch`),
+read the TCP socket yourself (debug builds only).
+
+---
+
 # Native-DASH smoke test — does the Referer-patched `libdash` work on PiliPlus?
 
 Goal: prove, **on PiliPlus specifically**, that the native adaptive-streaming
