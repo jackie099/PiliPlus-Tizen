@@ -37,10 +37,25 @@ before building Dailymotion (it must stay unpatched).
 ## 1. Build (signed, debug, native flag ON)
 
 ```bash
-flutter-tizen build tpk --debug -s jackie --dart-define=BILI_NATIVE_DASH=true
+# --dart-define=IS_TIZEN=true is MANDATORY (see TIZEN_BUILD.md): without it,
+# main.dart runs MediaKit.ensureInitialized() (libmpv, absent on Tizen) and the
+# app CRASHES at startup — the launcher just spins forever, pre-Flutter.
+flutter-tizen build tpk --debug -s jackie \
+  --dart-define=IS_TIZEN=true --dart-define=BILI_NATIVE_DASH=true
 ```
 
 `build tpk -s` re-signs, so the patched `libdash` is covered by the signature.
+
+**Reading logs on the retail S90F:** `sdb dlog`/`sdb shell` are firmware-disabled
+(`sdb capability` → `log_enable:disabled`, `intershell_support:disabled`), so the
+device-log commands below return nothing. To see `[BILI-NATIVE-DASH]` + player
+errors, use the attached run (streams `debugPrint` over the VM service):
+```bash
+flutter-tizen run -d <ip>:26101 --debug \
+  --dart-define=IS_TIZEN=true --dart-define=BILI_NATIVE_DASH=true
+```
+Launch is via `sdb launch -p com.example.piliplus -e Runner.dll -m run` (shell is
+disabled). Release mode does NOT stream over the logging port — use `--debug`.
 
 ## 2. Confirm the TPK actually embeds the patched `libdash` (before install)
 
