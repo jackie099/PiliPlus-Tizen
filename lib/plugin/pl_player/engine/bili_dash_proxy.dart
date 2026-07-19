@@ -3,7 +3,26 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
+
+/// Debug/spike flag for the native-DASH smoke test.
+///
+/// When `true`, the AVPlay backend plays Bilibili dual-stream DASH through the
+/// NATIVE adaptive-streaming engine fetching segments STRAIGHT FROM THE CDN: the
+/// synthesized manifest's `<BaseURL>` is the real Bilibili CDN url and only the
+/// ~2 KB manifest is served over loopback (no per-segment byte-pump). The CDN's
+/// mandatory `Referer: https://www.bilibili.com` is supplied by a Referer-patched
+/// `libdash.so`, not by Dart. When `false` (default) the historical byte-pump
+/// path is used (loopback `<BaseURL>` + general engine), so a build without the
+/// dart-define below behaves exactly as before.
+///
+/// Enable for a build with `--dart-define=BILI_NATIVE_DASH=true` (grep device
+/// logs for `[BILI-NATIVE-DASH]` to confirm it engaged); or, if your build flow
+/// drops dart-defines, change `defaultValue` to `true` here.
+const bool kBiliNativeDash =
+    bool.fromEnvironment('BILI_NATIVE_DASH', defaultValue: false);
 
 /// A localhost reverse-proxy that adapts Bilibili media streams for the Samsung
 /// TV video engine (`video_player_avplay`'s CAPI `MediaPlayer` backend).
@@ -452,11 +471,25 @@ class BiliDashProxy {
   /// falls back to a safe AVC/AAC-shaped default so the manifest stays valid.
   String _buildMpd(String token) {
     final _ProxyEntry entry = _registry[token]!;
-    // Absolute BaseURLs so the player resolves them against this server rather
-    // than the manifest's own path.
-    final String videoUrl = '$_base/seg/$token/v';
-    final String audioUrl = '$_base/seg/$token/a';
+    // BaseURLs. Byte-pump mode: absolute loopback `/seg/*` endpoints this server
+    // proxies to the CDN (Referer/UA injected in Dart). Native-DASH mode: the
+    // REAL Bilibili CDN urls, so the native engine fetches every segment directly
+    // and only this manifest travels over loopback (Referer comes from the
+    // patched libdash). The `<SegmentBase>` byte ranges below are identical
+    // either way — they describe offsets inside the same fragmented-MP4 the
+    // BaseURL points at.
+    final String videoUrl =
+        kBiliNativeDash ? entry.videoUri : '$_base/seg/$token/v';
+    final String audioUrl = kBiliNativeDash
+        ? (entry.audioUri ?? '$_base/seg/$token/a')
+        : '$_base/seg/$token/a';
     final bool hasAudio = entry.audioUri != null;
+    if (kBiliNativeDash) {
+      debugPrint(
+        '[BILI-NATIVE-DASH] manifest BaseURLs -> v=$videoUrl'
+        '${hasAudio ? ' a=$audioUrl' : ''}',
+      );
+    }
 
     // A `static` (on-demand) MPD needs an explicit presentation duration for the
     // player to build its timeline; without it some demuxers index the streams

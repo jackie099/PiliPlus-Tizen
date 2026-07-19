@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:video_player_avplay/video_player.dart';
 import 'package:video_player_avplay/video_player_platform_interface.dart'
-    show VideoFormat, PlayerEngine;
+    show VideoFormat, PlayerEngine, StreamingPropertyType;
 
 import 'abstract_media_player.dart';
 import 'bili_dash_proxy.dart';
@@ -273,6 +273,13 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
     final VideoFormat format =
         effective.hasSeparateAudio ? VideoFormat.dash : VideoFormat.other;
 
+    // Native-DASH smoke path ([kBiliNativeDash]): only the dual-stream DASH case
+    // — whose manifest carries real CDN `<BaseURL>`s served over loopback —
+    // switches to the adaptive-streaming engine. Single-url `/direct/` sources
+    // stay on the general engine + byte-pump (which the adaptive engine can't
+    // prepare).
+    final bool nativeDash = kBiliNativeDash && effective.hasSeparateAudio;
+
     final Map<String, String> httpHeaders = <String, String>{};
     if (_userAgent != null && _userAgent!.isNotEmpty) {
       httpHeaders['User-Agent'] = _userAgent!;
@@ -282,14 +289,34 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       httpHeaders['Cookie'] = cookie;
     }
 
+    // The adaptive-streaming (PlusPlayer) engine ignores httpHeaders and honors
+    // only Cookie / User-Agent, and only via streamingProperty; the mandatory
+    // Referer is injected by the Referer-patched libdash, not here.
+    final Map<StreamingPropertyType, String>? streamingProperty = nativeDash
+        ? <StreamingPropertyType, String>{
+            if (_userAgent != null && _userAgent!.isNotEmpty)
+              StreamingPropertyType.userAgent: _userAgent!,
+            if (cookie != null && cookie.isNotEmpty)
+              StreamingPropertyType.cookie: cookie,
+          }
+        : null;
+
+    if (nativeDash) {
+      debugPrint(
+        '[BILI-NATIVE-DASH] open on adaptiveStreaming engine; manifest url=$url',
+      );
+    }
+
     final VideoPlayerController controller = VideoPlayerController.network(
       url,
       formatHint: format,
       httpHeaders: httpHeaders,
-      // All our media is served through the localhost DASH proxy; the
-      // adaptive-streaming engine fails to prepare those sources, so force the
-      // general-purpose engine (previously a native plugin patch).
-      playerEngine: PlayerEngine.general,
+      streamingProperty: streamingProperty,
+      // Native-DASH: the adaptive-streaming (PlusPlayer) engine fetches segments
+      // straight from the CDN. Otherwise media is served through the localhost
+      // byte-pump proxy, which only the general-purpose CAPI engine prepares.
+      playerEngine:
+          nativeDash ? PlayerEngine.adaptiveStreaming : PlayerEngine.general,
     );
     _controller = controller;
     _prev = null;
