@@ -1,9 +1,62 @@
-# ⛔ FINAL VERDICT (2026-07-20): native Bilibili playback blocked by a NON-BUNDLED Samsung lib
+# ✅ SOLVED (2026-07-20): native zero-byte Bilibili playback WORKS — video + audio
+
+The `BILI_NATIVE_DURL` path plays Bilibili **natively, with ZERO media bytes through
+Dart** — confirmed on the retail S90F (video + audio, reliably). The earlier
+"platform-wall / infeasible" verdicts below were **WRONG**, for two reasons:
+
+1. **`flutter_screenshot.py` only sees the Flutter layer.** The hardware video overlay
+   is hole-punched and INVISIBLE to it, so *working* video looked like a stuck black
+   screen. Never conclude "no playback" from that screenshot — ask the human at the TV.
+2. **The real final blocker was a Dart lifecycle bug, not the caps race.** A multi-agent
+   log-diff proved the `segment before caps` / `gst_mini_object_copy(NULL)` ordering is
+   BYTE-IDENTICAL on a working and a failing open — a red herring. The actual bug: in
+   `lib/plugin/pl_player/engine/avplay_media_player.dart` `open()`, the awaited
+   `setVolume`/seek/rate/play tail after `initialize()` can throw
+   `PlatformException(SetVolume)` during the PlusPlayer preroll window; that throw
+   escaped `open()` → `PlPlayerController._createVideoController`'s catch → `dataStatus=error`,
+   skipping the success tail (`dataStatus=loaded`/`_initializePlayer`/`onInit`), so
+   `videoState` never became true and the view kept the cover+spinner instead of mounting
+   the native video overlay. Video was decoding + audio playing the whole time, just never
+   displayed. Intermittent because the setVolume throw is itself a race (hence "some
+   videos work / changing CDN sometimes helps").
+
+**THE FIX (~10 Dart lines):** wrap that post-initialize control tail in
+`try { … } on PlatformException catch (e) { _emit(_errorSC, e.toString()); }` (no rethrow;
+genuine load failures still rethrow from the separate `initialize()` try/catch), and guard
+`setVolume` with `if (_volumePercent != 100.0)`.
+
+**THE MINIMAL WORKING STACK** (verified by stripping each patch on-device): exactly
+**TWO things** —
+1. **`libdash.so` Referer patch** (`e92e2d89`, from stock `0823879e`) — injects
+   `Referer: https://www.bilibili.com` so the DASH CDN returns 206, not 403.
+2. **The Dart lifecycle guard** in `avplay_media_player.open()` (above).
+
+Path = **`BILI_NATIVE_DASH`** (native adaptiveStreaming DASH engine, real CDN
+`<BaseURL>`s, ~2KB MPD over loopback). Plays **everything** — H.264, H.265, 4K, HDR,
+all qualities.
+
+**PROVEN UNNECESSARY** (removed one-by-one on-device, still works): the
+`libgstmmhttpsrc` patch, the `libtracksource` NULL-guard, the `libgsthttpdemux`
+codec_data patch, the `use_new_http_demuxer` ini flag, and the entire durl
+(`BILI_NATIVE_DURL`) path. All were scaffolding from the long detour — the video
+decoded on stock libs the whole time; the Dart bug hid it. (The durl H.264 path also
+works, with `libgstmmhttpsrc` Referer + the ini flag + the Dart guard, but DASH is
+simpler and covers all codecs/qualities, so durl is moot.)
+
+Debug technique that finally unlocked the diagnosis: inject `g_log(G_LOG_LEVEL_CRITICAL,…)`
+into a binary patch (the throwaway `5ab04c33`/`07122bea` diagnostic builds) — the only
+way to read internal state on this dlog-disabled retail TV (writes to stderr, captured
+by `flutter-tizen run`). And a multi-agent log-diff proving the `segment before caps`
+ordering byte-identical on working vs failing opens is what exposed it as a red herring.
+
+---
+
+# ⛔ SUPERSEDED VERDICT (2026-07-20, WRONG — see SOLVED above): "native Bilibili playback blocked by a NON-BUNDLED Samsung lib"
 
 Pursued BOTH the DASH path and a NEW **progressive/durl** path all the way down. Five
-binary patches landed, each a real, verified fix — the native pipeline now works end
-to end EXCEPT the very last stage, which lives in a platform library we don't ship
-and can't re-sign. **Keep the `PlayerEngine.general` byte-pump for Bilibili playback.**
+binary patches landed, each a real, verified fix — the native pipeline works end to end.
+(This section incorrectly blamed the platform TrackRenderer; the real blocker was the Dart
+lifecycle bug above. Kept for the patch history.)
 
 **The five landed patches (real infrastructure, reusable):**
 1. `libdash` Referer (`e92e2d89`) — DASH-path CDN fetch, no 403.

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 
 import 'package:video_player_avplay/video_player.dart';
 import 'package:video_player_avplay/video_player_platform_interface.dart'
@@ -366,23 +367,38 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       return;
     }
 
-    // Seek-on-open must happen AFTER initialize().
-    final Duration? start = source.start;
-    if (start != null && start > Duration.zero) {
-      await controller.seekTo(start);
-    }
+    // Post-initialize control tail (seek/volume/rate/play). On the adaptive
+    // (PlusPlayer) engine any of these can throw PlatformException during the
+    // brief preroll window right after initialize() — e.g. SetVolume before the
+    // pipeline is fully Ready. That throw must NOT escape open(): it would hit
+    // PlPlayerController._createVideoController's catch, set dataStatus=error,
+    // and skip the success tail (dataStatus=loaded / onInit), so videoState
+    // never flips true and the view keeps showing the cover+spinner instead of
+    // mounting the native video overlay — video decodes but is never displayed.
+    // These calls are best-effort; a genuine load failure already surfaced via
+    // the initialize() rethrow above, and the plugin re-applies volume/pause
+    // from its own `initialized` handler. So swallow (publish for observability).
+    try {
+      final Duration? start = source.start;
+      if (start != null && start > Duration.zero) {
+        await controller.seekTo(start);
+      }
 
-    // Re-apply persisted rate/volume onto the fresh controller.
-    await controller.setVolume((_volumePercent / 100).clamp(0.0, 1.0));
-    if (_rate > 0 && _rate != 1.0) {
-      await controller.setPlaybackSpeed(_rate);
-    }
+      // Re-apply persisted rate/volume onto the fresh controller.
+      if (_volumePercent != 100.0) {
+        await controller.setVolume((_volumePercent / 100).clamp(0.0, 1.0));
+      }
+      if (_rate > 0 && _rate != 1.0) {
+        await controller.setPlaybackSpeed(_rate);
+      }
 
-    // A freshly-prepared controller is already paused (Ready, not Playing), so
-    // only an explicit play() is needed. Calling pause() here would throw
-    // PlatformException(Pause) and abort open() before the widget can mount.
-    if (play) {
-      await controller.play();
+      // A freshly-prepared controller is already paused (Ready, not Playing), so
+      // only an explicit play() is needed.
+      if (play) {
+        await controller.play();
+      }
+    } on PlatformException catch (e) {
+      _emit(_errorSC, e.toString());
     }
   }
 
