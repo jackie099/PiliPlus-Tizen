@@ -38,6 +38,32 @@ const bool kBiliNativeDash =
 const bool kBiliNativeVideoOnly =
     bool.fromEnvironment('BILI_NATIVE_VIDEO_ONLY', defaultValue: false);
 
+/// Option B: play the Bilibili VIDEO m4s DIRECTLY from the CDN as a plain
+/// PROGRESSIVE source (`formatHint: other` → Samsung's GstMmHttpSrc + qtdemux),
+/// bypassing the whole DASH `GstDashSrc`/`dashplusdemuxer` pipeline (whose
+/// closed ffdemux can't produce caps for Bilibili's split init/media fragments).
+/// No loopback proxy, no synthesized manifest — the engine fetches the single
+/// fragmented-MP4 straight from the CDN. The mandatory `Referer` comes from a
+/// Referer-patched `libgstmmhttpsrc.so` (same technique as libdash); UA/Cookie
+/// via streamingProperty. VIDEO-ONLY for now (Bilibili's audio is a separate
+/// file — a small side-channel is the follow-up). Build with
+/// `--dart-define=BILI_NATIVE_PROGRESSIVE=true`.
+const bool kBiliNativeProgressive =
+    bool.fromEnvironment('BILI_NATIVE_PROGRESSIVE', defaultValue: false);
+
+/// Native MUXED progressive path ([kBiliNativeDurl]): request Bilibili's legacy
+/// `durl` playurl (a single CONTIGUOUS mp4 carrying BOTH audio+video, moov-at-
+/// front, no moof fragments) instead of split DASH, and play that one CDN url
+/// directly on the adaptive engine via `GstHttpDemux`. Unlike
+/// [kBiliNativeProgressive] (fragmented, video-only), a contiguous mp4 yields
+/// stable caps at init with no mid-stream re-negotiation — the shape the
+/// PlusPlayer core handoff→appsrc bridge needs — AND carries audio, so no
+/// side-channel is required. Quality is capped (durl ≤1080p, no 4K/HDR). The
+/// `Referer` still comes from the patched `libgstmmhttpsrc.so`. Build with
+/// `--dart-define=BILI_NATIVE_DURL=true`.
+const bool kBiliNativeDurl =
+    bool.fromEnvironment('BILI_NATIVE_DURL', defaultValue: false);
+
 /// A localhost reverse-proxy that adapts Bilibili media streams for the Samsung
 /// TV video engine (`video_player_avplay`'s CAPI `MediaPlayer` backend).
 ///

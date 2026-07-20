@@ -220,8 +220,9 @@ abstract final class VideoHttp {
       'season_id': ?seasonId,
       'cid': cid,
       'qn': qn ?? 80,
-      // 获取所有格式的视频
-      'fnval': 4048,
+      // 获取所有格式的视频。BILI_NATIVE_DURL 走 fnval=1（legacy MP4 durl，单文件
+      // 连续 mp4，音视频合流）以喂给原生 GstHttpDemux；否则 4048（DASH 全量）。
+      'fnval': const bool.fromEnvironment('BILI_NATIVE_DURL') ? 1 : 4048,
       'fourk': 1,
       'fnver': 0,
       'voice_balance': voiceBalance ? 1 : 0,

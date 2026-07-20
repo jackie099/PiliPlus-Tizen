@@ -253,32 +253,45 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       );
     }
 
+    // Option B ([kBiliNativeProgressive]): play the CDN video m4s DIRECTLY as a
+    // progressive source — no proxy, no manifest — bypassing the DASH pipeline.
+    // [kBiliNativeDurl]: same direct-to-CDN play, but the source is a MUXED durl
+    // mp4 (single url, no separate audio) — a contiguous mp4 that clears the
+    // fragmented-mp4 caps race AND carries audio.
+    final bool durlNative = kBiliNativeDurl &&
+        !effective.hasSeparateAudio &&
+        (effective.videoUri.startsWith('http://') ||
+            effective.videoUri.startsWith('https://'));
+    final bool progressive =
+        (kBiliNativeProgressive && effective.hasSeparateAudio) || durlNative;
+
     // The proxy returns a 127.0.0.1 url — a synthetic DASH manifest for the
     // dual-stream case, a header-injecting passthrough otherwise — and folds in
-    // the mandatory Referer.
-    final String url = await _proxy.urlFor(
-      effective,
-      referer: _referer,
-      userAgent: _userAgent,
-      videoMeta: effective.videoMeta,
-      audioMeta: effective.audioMeta,
-      duration: effective.totalDuration,
-    );
+    // the mandatory Referer. Skipped entirely in progressive mode.
+    final String url = progressive
+        ? effective.videoUri
+        : await _proxy.urlFor(
+            effective,
+            referer: _referer,
+            userAgent: _userAgent,
+            videoMeta: effective.videoMeta,
+            audioMeta: effective.audioMeta,
+            duration: effective.totalDuration,
+          );
     if (_disposed) {
       return;
     }
 
-    // A merged dual-stream source is DASH; everything else is left to native
-    // format detection.
-    final VideoFormat format =
-        effective.hasSeparateAudio ? VideoFormat.dash : VideoFormat.other;
+    // A merged dual-stream source is DASH; a progressive source is a plain file;
+    // everything else is left to native format detection.
+    final VideoFormat format = progressive
+        ? VideoFormat.other
+        : (effective.hasSeparateAudio ? VideoFormat.dash : VideoFormat.other);
 
-    // Native-DASH smoke path ([kBiliNativeDash]): only the dual-stream DASH case
-    // — whose manifest carries real CDN `<BaseURL>`s served over loopback —
-    // switches to the adaptive-streaming engine. Single-url `/direct/` sources
-    // stay on the general engine + byte-pump (which the adaptive engine can't
-    // prepare).
-    final bool nativeDash = kBiliNativeDash && effective.hasSeparateAudio;
+    // Native-DASH smoke path ([kBiliNativeDash]): dual-stream DASH on the adaptive
+    // engine with CDN `<BaseURL>`s. Mutually exclusive with [progressive].
+    final bool nativeDash =
+        kBiliNativeDash && effective.hasSeparateAudio && !progressive;
 
     final Map<String, String> httpHeaders = <String, String>{};
     if (_userAgent != null && _userAgent!.isNotEmpty) {
@@ -291,19 +304,27 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
 
     // The adaptive-streaming (PlusPlayer) engine ignores httpHeaders and honors
     // only Cookie / User-Agent, and only via streamingProperty; the mandatory
-    // Referer is injected by the Referer-patched libdash, not here.
-    final Map<StreamingPropertyType, String>? streamingProperty = nativeDash
-        ? <StreamingPropertyType, String>{
-            if (_userAgent != null && _userAgent!.isNotEmpty)
-              StreamingPropertyType.userAgent: _userAgent!,
-            if (cookie != null && cookie.isNotEmpty)
-              StreamingPropertyType.cookie: cookie,
-          }
-        : null;
+    // Referer is injected by the patched libdash (DASH) / libgstmmhttpsrc
+    // (progressive), not here.
+    final Map<StreamingPropertyType, String>? streamingProperty =
+        (nativeDash || progressive)
+            ? <StreamingPropertyType, String>{
+                if (_userAgent != null && _userAgent!.isNotEmpty)
+                  StreamingPropertyType.userAgent: _userAgent!,
+                if (cookie != null && cookie.isNotEmpty)
+                  StreamingPropertyType.cookie: cookie,
+              }
+            : null;
 
     if (nativeDash) {
       debugPrint(
         '[BILI-NATIVE-DASH] open on adaptiveStreaming engine; manifest url=$url',
+      );
+    }
+    if (progressive) {
+      debugPrint(
+        '[${durlNative ? 'BILI-NATIVE-DURL' : 'BILI-NATIVE-PROG'}] '
+        '${durlNative ? 'muxed durl' : 'progressive video'} direct from CDN: $url',
       );
     }
 
@@ -312,11 +333,15 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       formatHint: format,
       httpHeaders: httpHeaders,
       streamingProperty: streamingProperty,
-      // Native-DASH: the adaptive-streaming (PlusPlayer) engine fetches segments
-      // straight from the CDN. Otherwise media is served through the localhost
-      // byte-pump proxy, which only the general-purpose CAPI engine prepares.
-      playerEngine:
-          nativeDash ? PlayerEngine.adaptiveStreaming : PlayerEngine.general,
+      // Native-DASH AND progressive both use the adaptive-streaming (PlusPlayer)
+      // engine — the only one that injects the Referer natively (via the patched
+      // libgstmmhttpsrc / libdash). Progressive routes the plain mp4/mov through
+      // the bundled clearkey-free GstHttpDemux (plusplayer.ini
+      // `use_new_http_demuxer: true`), avoiding the retail-blocked system
+      // libgstffmpeg. Only byte-pump durl/direct sources use the CAPI engine.
+      playerEngine: (nativeDash || progressive)
+          ? PlayerEngine.adaptiveStreaming
+          : PlayerEngine.general,
     );
     _controller = controller;
     _prev = null;

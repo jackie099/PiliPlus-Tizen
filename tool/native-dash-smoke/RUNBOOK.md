@@ -1,4 +1,53 @@
-# ⛔ VERDICT (2026-07-19): native DASH playback of Bilibili is INFEASIBLE on this engine
+# ⛔ FINAL VERDICT (2026-07-20): native Bilibili playback blocked by a NON-BUNDLED Samsung lib
+
+Pursued BOTH the DASH path and a NEW **progressive/durl** path all the way down. Five
+binary patches landed, each a real, verified fix — the native pipeline now works end
+to end EXCEPT the very last stage, which lives in a platform library we don't ship
+and can't re-sign. **Keep the `PlayerEngine.general` byte-pump for Bilibili playback.**
+
+**The five landed patches (real infrastructure, reusable):**
+1. `libdash` Referer (`e92e2d89`) — DASH-path CDN fetch, no 403.
+2. `libgstmmhttpsrc` Referer v2 (`164ee41d`) — progressive-path CDN fetch; v2 fixes a
+   `free(): invalid pointer` (the curl slist head wasn't re-nulled per request).
+3. `libtracksource_tvplus` NULL-guard (`a46dc873`) — `HttpTrackSource::GstDemuxerNoMorePadsCb_`
+   wired 3 fixed A/V/text slots with no NULL check; Bilibili's video-only m4s (empty
+   audio/text slots) crashed it. Guard skips empty slots → both A+V wire cleanly.
+4. `plusplayer.ini` `use_new_http_demuxer:true` → bundled clearkey-free `GstHttpDemux`
+   (the system `libgstffmpeg` won't load — `libclearkey.so.0: Operation not permitted`).
+5. `libgsthttpdemux` codec_data (`9320a038`) — `make_video_caps` built H.264 caps
+   WITHOUT `codec_data`/`stream-format`/`alignment` (only the audio path attached
+   codec_data); patch stamps `video/x-h264, …, stream-format=avc, alignment=au,
+   codec_data=<avcC>`, matching the working `ffdemux_dash_mov`.
+
+**The wall (proven on-device + by import analysis):** with all 5 patches, an on-device
+`g_log` diagnostic injected into the demuxer prints `BILIHOOK fired H264` + `BILICAPS
+cd=PRESENT` — i.e. the demuxer caps are now COMPLETE and spec-correct, and
+`libtracksource` extracts codec_data into the platform `Track` without ever copying
+NULL (it has a "No caps from pad" branch). Yet the player still stalls at 00:00 with
+`gst_mini_object_copy(NULL)` → `gst_caps_get_structure GST_IS_CAPS failed` →
+`<omx*dec:src>/<teeElement>/<*sink>` **segment-before-caps** → `GST_IS_CLOCK` →
+`PlatformException(Pause/SetVolume)`. `gst_mini_object_copy`/`gst_caps_copy`/
+`gst_buffer_copy` are imported by NONE of the durl-path bundled libs (only `libgstdash`,
+unused for durl) → the NULL-caps copy + appsrc caps-ordering run inside the proprietary,
+non-bundled **`libtrackrenderer.so`** (the appsrc→tee→omxdec pipeline builder).
+Dailymotion works through the SAME TrackRenderer via `ffdemux_dash_mov` (SegmentTemplate),
+so the residual difference is some caps-push timing/threading in `GstHttpDemux`'s async
+path — unpatchable from the bundled libs. **No in-fork lever remains.**
+
+Flags (all default-OFF, so zero behavior change): `BILI_NATIVE_DASH` (dual-stream DASH),
+`BILI_NATIVE_VIDEO_ONLY` (diag), `BILI_NATIVE_PROGRESSIVE` (fragmented video-only m4s),
+`BILI_NATIVE_DURL` (fnval=1 muxed contiguous mp4 — routes the raw CDN durl to the native
+engine). Patch deliverables live OUTSIDE the repo: `~/projects/tizen/bilibili-referer-patch/`,
+`bilibili-mmhttpsrc-patch/`, `bilibili-tracksource-patch/`, `bilibili-httpdemux-patch/`.
+Diagnostic technique that finally worked on this dlog-disabled retail TV: inject
+`g_log(G_LOG_LEVEL_CRITICAL, …)` into a binary patch — it writes to stderr unconditionally
+(captured by `flutter-tizen run`), the only way to observe internal state (GST_CAPS debug
+yields invalid-object errors; `gst_debug_log` with a private category is threshold-gated
+silent; `sdb pull /usr/lib` is path-blocked).
+
+---
+
+# ⛔ EARLIER VERDICT (2026-07-19, DASH path): native DASH playback of Bilibili is INFEASIBLE on this engine
 
 The Referer mechanism **works** (patched `libdash` → native engine fetches Bilibili
 CDN segments directly, no 403, bytes reach the decoders — proven on-device). But
