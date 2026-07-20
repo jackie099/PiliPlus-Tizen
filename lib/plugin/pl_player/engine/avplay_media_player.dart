@@ -254,23 +254,36 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       );
     }
 
-    // Option B ([kBiliNativeProgressive]): play the CDN video m4s DIRECTLY as a
-    // progressive source — no proxy, no manifest — bypassing the DASH pipeline.
-    // [kBiliNativeDurl]: same direct-to-CDN play, but the source is a MUXED durl
-    // mp4 (single url, no separate audio) — a contiguous mp4 that clears the
-    // fragmented-mp4 caps race AND carries audio.
-    final bool durlNative = kBiliNativeDurl &&
-        !effective.hasSeparateAudio &&
-        (effective.videoUri.startsWith('http://') ||
-            effective.videoUri.startsWith('https://'));
-    final bool progressive =
-        (kBiliNativeProgressive && effective.hasSeparateAudio) || durlNative;
+    // Dual-stream (separate video + audio) plays natively as ZERO-BYTE DASH: the
+    // proxy serves only a ~2KB synthetic MPD with real CDN `<BaseURL>`s and the
+    // adaptive (PlusPlayer) engine fetches the segments directly — the Referer
+    // comes from the patched `libdash`.
+    final bool nativeDash = effective.hasSeparateAudio;
 
-    // The proxy returns a 127.0.0.1 url — a synthetic DASH manifest for the
-    // dual-stream case, a header-injecting passthrough otherwise — and folds in
-    // the mandatory Referer. Skipped entirely in progressive mode.
-    final String url = progressive
-        ? effective.videoUri
+    // Live plays as a PROGRESSIVE concat on the CAPI (general) engine. Bilibili's
+    // live fMP4 (`.../index.m3u8`) is a single MUXED stream; the proxy welds its
+    // fragments into ONE continuous fMP4 byte stream that the general engine
+    // plays like a durl mp4. This is the ONE path where live video actually
+    // renders — the adaptive/GstDashSrc DASH remux decodes but re-prepares its
+    // pipeline at the live edge and the video caps come up broken on this closed
+    // firmware. Only live produces an `.m3u8` uri here (VOD is dual-stream DASH or
+    // a durl MP4); remaining single-url sources fall to the `/direct` byte-pump.
+    final bool liveHls = !nativeDash && effective.videoUri.contains('.m3u8');
+
+    // Only native dual-stream DASH runs on the adaptive engine; live-progressive
+    // and single-url byte-pump sources use the CAPI (general) engine.
+    final bool adaptive = nativeDash;
+
+    // A 127.0.0.1 proxy url in every case: a synthetic DASH manifest (`/mpd`) for
+    // the dual-stream native case, a progressive fMP4 concat (`/live-prog`) for
+    // live, or a header-injecting passthrough (`/direct`) for the remaining
+    // single-url byte-pump sources.
+    final String url = liveHls
+        ? await _proxy.urlForLiveProgressive(
+            effective.videoUri,
+            referer: _referer,
+            userAgent: _userAgent,
+          )
         : await _proxy.urlFor(
             effective,
             referer: _referer,
@@ -283,16 +296,9 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       return;
     }
 
-    // A merged dual-stream source is DASH; a progressive source is a plain file;
-    // everything else is left to native format detection.
-    final VideoFormat format = progressive
-        ? VideoFormat.other
-        : (effective.hasSeparateAudio ? VideoFormat.dash : VideoFormat.other);
-
-    // Native-DASH smoke path ([kBiliNativeDash]): dual-stream DASH on the adaptive
-    // engine with CDN `<BaseURL>`s. Mutually exclusive with [progressive].
-    final bool nativeDash =
-        kBiliNativeDash && effective.hasSeparateAudio && !progressive;
+    // Both native paths (dual-stream DASH, live HLS→DASH remux) are DASH.
+    final VideoFormat format =
+        adaptive ? VideoFormat.dash : VideoFormat.other;
 
     final Map<String, String> httpHeaders = <String, String>{};
     if (_userAgent != null && _userAgent!.isNotEmpty) {
@@ -304,45 +310,35 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
     }
 
     // The adaptive-streaming (PlusPlayer) engine ignores httpHeaders and honors
-    // only Cookie / User-Agent, and only via streamingProperty; the mandatory
-    // Referer is injected by the patched libdash (DASH) / libgstmmhttpsrc
-    // (progressive), not here.
-    final Map<StreamingPropertyType, String>? streamingProperty =
-        (nativeDash || progressive)
-            ? <StreamingPropertyType, String>{
-                if (_userAgent != null && _userAgent!.isNotEmpty)
-                  StreamingPropertyType.userAgent: _userAgent!,
-                if (cookie != null && cookie.isNotEmpty)
-                  StreamingPropertyType.cookie: cookie,
-              }
-            : null;
-
-    if (nativeDash) {
-      debugPrint(
-        '[BILI-NATIVE-DASH] open on adaptiveStreaming engine; manifest url=$url',
-      );
-    }
-    if (progressive) {
-      debugPrint(
-        '[${durlNative ? 'BILI-NATIVE-DURL' : 'BILI-NATIVE-PROG'}] '
-        '${durlNative ? 'muxed durl' : 'progressive video'} direct from CDN: $url',
-      );
-    }
+    // only Cookie / User-Agent, and only via streamingProperty; for VOD DASH the
+    // Referer is injected by the patched libdash, and live HLS needs none. The
+    // byte-pump (`/direct` + general engine) gets its headers from the proxy relay
+    // instead, so no streamingProperty.
+    final Map<StreamingPropertyType, String>? streamingProperty = adaptive
+        ? <StreamingPropertyType, String>{
+            if (_userAgent != null && _userAgent!.isNotEmpty)
+              StreamingPropertyType.userAgent: _userAgent!,
+            if (cookie != null && cookie.isNotEmpty)
+              StreamingPropertyType.cookie: cookie,
+            // Mark the live HLS→DASH remux as LIVE so PlusPlayer treats the
+            // (finite, DVR-windowed) manifest timeline as an unbounded live edge
+            // instead of a seekable VOD — otherwise it reports position==end at
+            // the edge and the replay/`play()` guard fires a `seekTo(0)` that
+            // fails on the non-rewindable stream (recurring `SeekTo` errors).
+            if (liveHls) StreamingPropertyType.isLive: 'TRUE',
+          }
+        : null;
 
     final VideoPlayerController controller = VideoPlayerController.network(
       url,
       formatHint: format,
       httpHeaders: httpHeaders,
       streamingProperty: streamingProperty,
-      // Native-DASH AND progressive both use the adaptive-streaming (PlusPlayer)
-      // engine — the only one that injects the Referer natively (via the patched
-      // libgstmmhttpsrc / libdash). Progressive routes the plain mp4/mov through
-      // the bundled clearkey-free GstHttpDemux (plusplayer.ini
-      // `use_new_http_demuxer: true`), avoiding the retail-blocked system
-      // libgstffmpeg. Only byte-pump durl/direct sources use the CAPI engine.
-      playerEngine: (nativeDash || progressive)
-          ? PlayerEngine.adaptiveStreaming
-          : PlayerEngine.general,
+      // Native DASH (patched-libdash Referer) and native HLS (Referer-free live)
+      // both use the adaptive-streaming (PlusPlayer) engine. Single-url byte-pump
+      // sources use the CAPI (general) engine fed by the loopback relay.
+      playerEngine:
+          adaptive ? PlayerEngine.adaptiveStreaming : PlayerEngine.general,
     );
     _controller = controller;
     _prev = null;

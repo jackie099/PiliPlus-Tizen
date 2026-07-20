@@ -81,6 +81,10 @@ abstract final class TvTheme {
   /// Bilibili brand pink, used sparingly (logo, selected-tab accent).
   static const Color brandPink = Color(0xFFFB7299);
 
+  /// Live-badge red for the 直播 pill on the TV live-room page (a vivid red so
+  /// it reads as "on air" against the dark chrome).
+  static const Color liveBadge = Color(0xFFFF4D4F);
+
   static const Color textPrimary = Color(0xFFF2F3F5);
   static const Color textSecondary = Color(0xFFA8AEBB);
 

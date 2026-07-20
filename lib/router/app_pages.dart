@@ -68,6 +68,7 @@ import 'package:PiliPlus/pages/video/view.dart';
 import 'package:PiliPlus/pages/webview/view.dart';
 import 'package:PiliPlus/pages/whisper/view.dart';
 import 'package:PiliPlus/pages/whisper_detail/view.dart';
+import 'package:PiliPlus/tv/pages/tv_live_room_page.dart';
 import 'package:PiliPlus/tv/pages/tv_video_page.dart';
 import 'package:PiliPlus/tv/tv_main.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -113,8 +114,12 @@ class Routes {
     GetPage(name: '/follow', page: () => const FollowPage()),
     // 粉丝
     GetPage(name: '/fan', page: () => const FansPage()),
-    // 直播详情
-    GetPage(name: '/liveRoom', page: () => const LiveRoomPage()),
+    // 直播详情（TV 上用 D-pad 直播页复用同一控制器/播放器会话）
+    GetPage(
+      name: '/liveRoom',
+      page: () =>
+          PlatformUtils.isTV ? const TvLiveRoomPage() : const LiveRoomPage(),
+    ),
     // 用户中心
     GetPage(name: '/member', page: () => const MemberPage()),
     GetPage(name: '/memberSearch', page: () => const MemberSearchPage()),

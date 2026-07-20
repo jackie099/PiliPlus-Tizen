@@ -7,95 +7,36 @@ import 'package:flutter/foundation.dart';
 
 import 'package:PiliPlus/plugin/pl_player/engine/abstract_media_player.dart';
 
-/// Debug/spike flag for the native-DASH smoke test.
+/// A localhost server that adapts Bilibili media streams for the Samsung TV
+/// video engine (`video_player_avplay`). It handles two source shapes:
 ///
-/// When `true`, the AVPlay backend plays Bilibili dual-stream DASH through the
-/// NATIVE adaptive-streaming engine fetching segments STRAIGHT FROM THE CDN: the
-/// synthesized manifest's `<BaseURL>` is the real Bilibili CDN url, the file's
-/// internal fragments are enumerated as a `<SegmentList>` of byte ranges parsed
-/// from its `sidx` (see [_writeSegmentList]), and only the manifest is served
-/// over loopback (no per-segment byte-pump). The CDN's mandatory
-/// `Referer: https://www.bilibili.com` is supplied by a Referer-patched
-/// `libdash.so`, not by Dart. When `false` (default) the historical byte-pump
-/// path is used (loopback `<BaseURL>` + general engine), so a build without the
-/// dart-define below behaves exactly as before.
+/// 1. **Dual-stream DASH** (separate video + audio URLs) — the common case.
+///    We synthesize a tiny `type="static"` DASH `.mpd` whose two `AdaptationSet`
+///    `<BaseURL>`s are the REAL Bilibili CDN urls, so the native adaptive
+///    (PlusPlayer) engine fetches every segment DIRECTLY — only this ~2KB
+///    manifest travels over loopback, and the CDN's mandatory
+///    `Referer: https://www.bilibili.com` is supplied by a Referer-patched
+///    `libdash.so`, not by Dart (ZERO media bytes through Dart). Each
+///    `Representation` carries a `<SegmentList>` enumerating the file's internal
+///    fragments as byte ranges parsed from its `sidx` (see [_writeSegmentList]
+///    for why the Samsung engine requires the enumerated shape), plus
+///    `mediaPresentationDuration` (summed from the `sidx`, else Bilibili's
+///    `timelength`) so the demuxer builds a timeline instead of stalling. Served
+///    at `GET /mpd/<token>.mpd`.
 ///
-/// Enable for a build with `--dart-define=BILI_NATIVE_DASH=true` (grep device
-/// logs for `[BILI-NATIVE-DASH]` to confirm it engaged); or, if your build flow
-/// drops dart-defines, change `defaultValue` to `true` here.
-const bool kBiliNativeDash =
-    bool.fromEnvironment('BILI_NATIVE_DASH', defaultValue: false);
-
-/// Diagnostic (native mode only): emit a VIDEO-ONLY single-AdaptationSet
-/// manifest — drop the audio track. Bilibili's separate video+audio forces
-/// Samsung's `GstDashSrc` into a per-track branch that connects
-/// `need-data-video`/`-audio` signals its own class never registered (a bug in
-/// the bundled `libgstdash`), so prepare collapses. A single pad instead takes
-/// the working generic `need-data` path. This isolates TOPOLOGY (dual-pad) from
-/// ADDRESSING (byte ranges). Build with `--dart-define=BILI_NATIVE_VIDEO_ONLY=true`.
-/// If it PLAYS, the dual-pad wiring is the sole wall and a native-video +
-/// side-channel-audio hybrid is viable; it is a diagnostic, not a product.
-const bool kBiliNativeVideoOnly =
-    bool.fromEnvironment('BILI_NATIVE_VIDEO_ONLY', defaultValue: false);
-
-/// Option B: play the Bilibili VIDEO m4s DIRECTLY from the CDN as a plain
-/// PROGRESSIVE source (`formatHint: other` → Samsung's GstMmHttpSrc + qtdemux),
-/// bypassing the whole DASH `GstDashSrc`/`dashplusdemuxer` pipeline (whose
-/// closed ffdemux can't produce caps for Bilibili's split init/media fragments).
-/// No loopback proxy, no synthesized manifest — the engine fetches the single
-/// fragmented-MP4 straight from the CDN. The mandatory `Referer` comes from a
-/// Referer-patched `libgstmmhttpsrc.so` (same technique as libdash); UA/Cookie
-/// via streamingProperty. VIDEO-ONLY for now (Bilibili's audio is a separate
-/// file — a small side-channel is the follow-up). Build with
-/// `--dart-define=BILI_NATIVE_PROGRESSIVE=true`.
-const bool kBiliNativeProgressive =
-    bool.fromEnvironment('BILI_NATIVE_PROGRESSIVE', defaultValue: false);
-
-/// Native MUXED progressive path ([kBiliNativeDurl]): request Bilibili's legacy
-/// `durl` playurl (a single CONTIGUOUS mp4 carrying BOTH audio+video, moov-at-
-/// front, no moof fragments) instead of split DASH, and play that one CDN url
-/// directly on the adaptive engine via `GstHttpDemux`. Unlike
-/// [kBiliNativeProgressive] (fragmented, video-only), a contiguous mp4 yields
-/// stable caps at init with no mid-stream re-negotiation — the shape the
-/// PlusPlayer core handoff→appsrc bridge needs — AND carries audio, so no
-/// side-channel is required. Quality is capped (durl ≤1080p, no 4K/HDR). The
-/// `Referer` still comes from the patched `libgstmmhttpsrc.so`. Build with
-/// `--dart-define=BILI_NATIVE_DURL=true`.
-const bool kBiliNativeDurl =
-    bool.fromEnvironment('BILI_NATIVE_DURL', defaultValue: false);
-
-/// A localhost reverse-proxy that adapts Bilibili media streams for the Samsung
-/// TV video engine (`video_player_avplay`'s CAPI `MediaPlayer` backend).
+/// 2. **Single-url sources** (durl-only videos, live HLS/FLV, audio-only
+///    "listen" mode) — these can't be expressed as dual-stream DASH, and the
+///    native HLS demuxer won't load on this retail TV, so they fall back to a
+///    byte-relay: the Bilibili CDN returns `403` without a `Referer` and the CAPI
+///    engine drops custom request headers, so the player talks to this loopback
+///    server, which re-issues the upstream request with the Referer/User-Agent
+///    attached and streams the bytes back. Served at `GET /direct/<token>`.
 ///
-/// It solves two problems the native player cannot handle on its own:
-///
-/// 1. **Missing Referer.** The Bilibili CDN returns `403` unless the request
-///    carries a `Referer: https://www.bilibili.com` (and a browser-ish
-///    `User-Agent`). The player drops custom request headers on the media
-///    socket, so the player talks to this loopback server instead and the server
-///    re-issues the upstream request with the headers attached.
-///
-/// 2. **Split DASH streams.** Bilibili DASH ships video and audio as two
-///    independent URLs; the native player accepts a single source only. For
-///    dual-stream sources we synthesize a `type="static"` DASH `.mpd` that
-///    references both streams as two `AdaptationSet`s. In byte-pump mode each
-///    `Representation` carries a `<SegmentBase>` whose `indexRange`/
-///    `Initialization` come from Bilibili's supplied `segmentBase` when
-///    present, or are otherwise derived by probing the leading MP4 boxes
-///    ([_probeSegmentBase]) of the stream; in native-DASH mode it instead
-///    carries a `<SegmentList>` enumerating the file's internal fragments as
-///    byte ranges parsed from its `sidx` (see [_writeSegmentList] for why the
-///    Samsung engine requires the enumerated shape). Either way the manifest
-///    declares `mediaPresentationDuration` (from Bilibili's `timelength`, or
-///    summed from the `sidx`); both are required for the native demuxer to
-///    build a timeline instead of stalling. In byte-pump mode segment/`Range`
-///    requests are proxied back through `/seg/*`.
-///
-/// Everything is served from `http://127.0.0.1:<ephemeral-port>/`; nothing
-/// leaves the loopback interface. The `Representation`s advertise the SELECTED
-/// stream's REAL codec / dimensions (threaded in from Bilibili's play-url DASH
-/// metadata via [DashStreamMeta]) so the CAPI backend accepts HEVC/AV1/FLAC as
-/// readily as AVC; a missing field falls back to an AVC/AAC-shaped default.
+/// Everything is served from `http://127.0.0.1:<ephemeral-port>/`; nothing leaves
+/// the loopback interface. The `Representation`s advertise the SELECTED stream's
+/// REAL codec / dimensions (threaded in from Bilibili's play-url DASH metadata
+/// via [DashStreamMeta]) so the engine accepts HEVC/AV1/FLAC as readily as AVC;
+/// a missing field falls back to an AVC/AAC-shaped default.
 class BiliDashProxy {
   BiliDashProxy();
 
@@ -204,6 +145,67 @@ class BiliDashProxy {
     return '$_base/direct/$token.mp4';
   }
 
+  /// Register a live HLS (fMP4) playlist [m3u8Url] and return a loopback
+  /// PROGRESSIVE url (`/live-prog/<token>.mp4`) that concatenates the live
+  /// fragments into ONE continuous fMP4 byte stream — no DASH manifest, no
+  /// segments, nothing for GstDashSrc to reload mid-stream (which is what stalls
+  /// the manifest path). Plays on the CAPI (`general`) engine like a durl mp4.
+  Future<String> urlForLiveProgressive(
+    String m3u8Url, {
+    String? referer,
+    String? userAgent,
+  }) async {
+    if (_server == null) await start();
+    final String token = _newToken();
+    _registry[token] = _ProxyEntry(
+      videoUri: m3u8Url,
+      audioUri: null,
+      referer: (referer != null && referer.isNotEmpty)
+          ? referer
+          : _defaultReferer,
+      userAgent: (userAgent != null && userAgent.isNotEmpty)
+          ? userAgent
+          : _defaultUserAgent,
+      isLiveHls: true,
+    );
+    return '$_base/live-prog/$token.mp4';
+  }
+
+  /// Register a live HLS (fMP4) playlist [m3u8Url] and return a loopback DASH
+  /// manifest url (`/live-mpd/<token>.mpd`, [formatHint] `dash`).
+  ///
+  /// Bilibili live is a single MUXED fMP4 stream. Its native HLS demuxer
+  /// (`libgsthls`) is version-skewed against this firmware's PlusPlayer and
+  /// mis-negotiates the video caps (audio decodes, video never starts). We
+  /// side-step it by re-expressing the live playlist as a small **dynamic** DASH
+  /// manifest — one muxed `Representation` whose `<SegmentList>` mirrors the
+  /// current media-playlist window — so playback runs through the WORKING
+  /// `libgstdash` path (the same one native VOD DASH uses). The manifest is
+  /// (re)generated from the upstream playlist on every fetch, so the engine's
+  /// `minimumUpdatePeriod` refresh follows the live edge.
+  ///
+  /// Auto-[start]s the server if it is not already listening.
+  Future<String> urlForLiveHls(
+    String m3u8Url, {
+    String? referer,
+    String? userAgent,
+  }) async {
+    if (_server == null) await start();
+    final String token = _newToken();
+    _registry[token] = _ProxyEntry(
+      videoUri: m3u8Url,
+      audioUri: null,
+      referer: (referer != null && referer.isNotEmpty)
+          ? referer
+          : _defaultReferer,
+      userAgent: (userAgent != null && userAgent.isNotEmpty)
+          ? userAgent
+          : _defaultUserAgent,
+      isLiveHls: true,
+    );
+    return '$_base/live-mpd/$token.mpd';
+  }
+
   /// Stop serving, drop the registry, and close idle upstream connections.
   ///
   /// Safe to call when already stopped.
@@ -226,14 +228,18 @@ class BiliDashProxy {
     try {
       final List<String> segments = request.uri.pathSegments;
       // Routes:
-      //   GET /mpd/<token>.mpd
-      //   GET /seg/<token>/v   GET /seg/<token>/a
-      //   GET /direct/<token>
+      //   GET /mpd/<token>.mpd       — native zero-byte DASH manifest (dual-stream)
+      //   GET /live-mpd/<token>.mpd  — live HLS re-expressed as dynamic DASH
+      //   GET /direct/<token>        — single-url byte-pump (durl-only / audio)
       if (segments.length == 2 && segments[0] == 'mpd') {
         final String token = _stripSuffix(segments[1], '.mpd');
         await _serveMpd(request, token);
-      } else if (segments.length == 3 && segments[0] == 'seg') {
-        await _serveSegment(request, segments[1], segments[2]);
+      } else if (segments.length == 2 && segments[0] == 'live-mpd') {
+        final String token = _stripSuffix(segments[1], '.mpd');
+        await _serveLiveMpd(request, token);
+      } else if (segments.length == 2 && segments[0] == 'live-prog') {
+        final String token = _stripSuffix(segments[1], '.mp4');
+        await _serveLiveProgressive(request, token);
       } else if (segments.length == 2 && segments[0] == 'direct') {
         await _serveDirect(request, segments[1]);
       } else {
@@ -253,32 +259,17 @@ class BiliDashProxy {
       await _respondStatus(request, HttpStatus.notFound);
       return;
     }
-    // Resolve each stream's init/index byte-ranges the first time the manifest
-    // is requested. A BaseURL-only on-demand Representation makes the player
-    // download the whole fragmented-MP4 without ever preparing (it cannot find
-    // the moov/sidx); a proper <SegmentBase> lets it index and play. In
-    // byte-pump mode PREFER Bilibili's supplied `segmentBase` ranges (no
-    // round-trip, authoritative) and fall back to byte-probing the leading MP4
-    // boxes only when they're absent.
+    // Resolve each stream's init/index byte-ranges the first time the manifest is
+    // requested, and enumerate its internal fragments as a <SegmentList> of byte
+    // ranges parsed from the sidx (see [_writeSegmentList]) — the sidx CONTENTS
+    // are required, so always fetch and parse the leading init+sidx region. The
+    // stream's supplied `indexRange` merely bounds that fetch to a few KB instead
+    // of a blind 256 KiB probe window.
     if (!entry.probed) {
-      if (kBiliNativeDash) {
-        // Native mode enumerates the internal fragments ([_writeSegmentList]),
-        // so the sidx CONTENTS are required — Bilibili's supplied byte ranges
-        // alone cannot enumerate anything. Always fetch and parse the leading
-        // init+sidx region; the supplied `indexRange` merely bounds that fetch
-        // to a few KB instead of the blind 256 KiB probe window.
-        entry
-          ..videoSeg =
-              await _probeIndexed(entry.videoUri, entry, entry.videoMeta)
-          ..audioSeg =
-              await _probeIndexed(entry.audioUri!, entry, entry.audioMeta);
-      } else {
-        entry
-          ..videoSeg = _segBaseFromMeta(entry.videoMeta) ??
-              await _probeSegmentBase(entry.videoUri, entry)
-          ..audioSeg = _segBaseFromMeta(entry.audioMeta) ??
-              await _probeSegmentBase(entry.audioUri!, entry);
-      }
+      entry
+        ..videoSeg = await _probeIndexed(entry.videoUri, entry, entry.videoMeta)
+        ..audioSeg =
+            await _probeIndexed(entry.audioUri!, entry, entry.audioMeta);
       entry.probed = true;
     }
     final String mpd = _buildMpd(token);
@@ -292,29 +283,6 @@ class BiliDashProxy {
     await res.close();
   }
 
-  /// `GET /seg/<token>/{v|a}` — reverse-proxy the video or audio stream.
-  Future<void> _serveSegment(
-    HttpRequest request,
-    String token,
-    String kind,
-  ) async {
-    final _ProxyEntry? entry = _registry[token];
-    if (entry == null) {
-      await _respondStatus(request, HttpStatus.notFound);
-      return;
-    }
-    final String? target = switch (kind) {
-      'v' => entry.videoUri,
-      'a' => entry.audioUri,
-      _ => null,
-    };
-    if (target == null) {
-      await _respondStatus(request, HttpStatus.notFound);
-      return;
-    }
-    await _proxy(request, target, entry);
-  }
-
   /// `GET /direct/<token>` — plain header-injecting reverse proxy.
   Future<void> _serveDirect(HttpRequest request, String rawToken) async {
     final String token = _stripSuffix(rawToken, '.mp4');
@@ -324,6 +292,392 @@ class BiliDashProxy {
       return;
     }
     await _proxy(request, entry.videoUri, entry);
+  }
+
+  /// `GET /live-mpd/<token>.mpd` — fetch the upstream live HLS (fMP4) playlist
+  /// and return it re-expressed as a DASH manifest (see [urlForLiveHls]).
+  Future<void> _serveLiveMpd(HttpRequest request, String token) async {
+    final _ProxyEntry? entry = _registry[token];
+    if (entry == null || !entry.isLiveHls) {
+      await _respondStatus(request, HttpStatus.notFound);
+      return;
+    }
+    // Pre-warm the rolling DVR on the FIRST request so the player never begins at
+    // a shallow live edge — when the playhead catches the edge with little buffer
+    // the engine emits a (recoverable) EOS ~10s in. On later requests liveSegs is
+    // already deep, so this fetches once and returns immediately.
+    int attempts = 0;
+    while (true) {
+      final String? m3u8 = await _fetchText(entry.videoUri, entry);
+      if (m3u8 != null) _accumulateLiveSegs(entry, m3u8);
+      attempts++;
+      // Accumulate ~28s of DVR so the wide (~18s) presentation delay starts the
+      // player far from the live edge. Bounded so a stalled upstream can't hang.
+      if (entry.liveSegs.length >= 28 || attempts >= 14) break;
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+    }
+    final String? mpd = _buildLiveMpd(entry);
+    if (mpd == null) {
+      await _respondStatus(request, HttpStatus.badGateway);
+      return;
+    }
+    final HttpResponse res = request.response;
+    res.statusCode = HttpStatus.ok;
+    res.headers
+      ..contentType = ContentType.parse(_mpdContentType)
+      ..set(HttpHeaders.cacheControlHeader, 'no-cache')
+      ..set(HttpHeaders.accessControlAllowOriginHeader, '*');
+    res.write(mpd);
+    await res.close();
+  }
+
+  /// `GET /live-prog/<token>.mp4` — concatenate the live fMP4 fragments into ONE
+  /// continuous byte stream (init once, then every media fragment as it appears)
+  /// and stream it to the player, polling the upstream playlist for new fragments
+  /// until the client disconnects. The player sees a single growing progressive
+  /// file, so nothing reloads mid-stream.
+  Future<void> _serveLiveProgressive(HttpRequest request, String token) async {
+    final _ProxyEntry? entry = _registry[token];
+    if (entry == null || !entry.isLiveHls) {
+      await _respondStatus(request, HttpStatus.notFound);
+      return;
+    }
+    final HttpResponse res = request.response;
+    res.statusCode = HttpStatus.ok;
+    res.headers
+      ..contentType = ContentType('video', 'mp4')
+      ..set(HttpHeaders.cacheControlHeader, 'no-cache')
+      ..set(HttpHeaders.accessControlAllowOriginHeader, '*');
+    // Track whether the player is still reading; stop the pump when it hangs up.
+    bool clientOpen = true;
+    res.done.whenComplete(() => clientOpen = false).catchError((_) {});
+
+    bool initSent = false;
+    final Set<String> sent = <String>{}; // segment path (token-stripped) → sent
+    final Uri base = Uri.parse(entry.videoUri);
+    bool firstPass = true;
+    try {
+      while (clientOpen && _server != null) {
+        final String? m3u8 = await _fetchText(entry.videoUri, entry);
+        if (m3u8 == null) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          continue;
+        }
+        String? initUrl;
+        final List<String> segUrls = <String>[];
+        for (final String raw in m3u8.split('\n')) {
+          final String line = raw.trim();
+          if (line.isEmpty) continue;
+          if (line.startsWith('#EXT-X-MAP:')) {
+            final RegExpMatch? m = RegExp(r'URI="([^"]+)"').firstMatch(line);
+            if (m != null) initUrl = base.resolve(m.group(1)!).toString();
+          } else if (!line.startsWith('#')) {
+            segUrls.add(base.resolve(line).toString());
+          }
+        }
+        // Init (`ftyp`+`moov`) must lead the stream, before any fragment.
+        if (!initSent && initUrl != null) {
+          final List<int>? bytes = await _fetchBytes(initUrl, entry);
+          if (bytes != null && clientOpen) {
+            res.add(bytes);
+            initSent = true;
+          }
+        }
+        final List<String> fresh = segUrls
+            .where((String u) => !sent.contains(u.split('?').first))
+            .toList();
+        if (firstPass) {
+          // Fast startup: the CAPI engine needs a solid initial buffer QUICKLY or
+          // it never latches (the intermittent no-decode). Fetch the whole current
+          // window IN PARALLEL and burst it in order, instead of one-at-a-time.
+          firstPass = false;
+          final List<List<int>?> parts = await Future.wait(
+            fresh.map((String u) => _fetchBytes(u, entry)),
+          );
+          int burstBytes = 0;
+          for (int i = 0; i < fresh.length; i++) {
+            if (!clientOpen) break;
+            final List<int>? b = parts[i];
+            if (b != null) {
+              res.add(b);
+              burstBytes += b.length;
+              sent.add(fresh[i].split('?').first);
+            }
+          }
+          await res.flush();
+          debugPrint(
+            '[LIVE-PROG] init+burst ${fresh.length} frags '
+            '(${(burstBytes / 1024).round()} KiB)',
+          );
+        } else {
+          // Steady state: new fragments arrive ~1/s; fetch + append in order.
+          for (final String segUrl in fresh) {
+            if (!clientOpen) break;
+            final List<int>? bytes = await _fetchBytes(segUrl, entry);
+            if (bytes != null && clientOpen) {
+              res.add(bytes);
+              await res.flush();
+              sent.add(segUrl.split('?').first);
+            }
+          }
+        }
+        // Bound the dedup set so a long session doesn't grow it unbounded.
+        if (sent.length > 300) {
+          final List<String> keys = sent.toList();
+          sent
+            ..clear()
+            ..addAll(keys.sublist(keys.length - 150));
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+      }
+    } catch (_) {
+    } finally {
+      try {
+        await res.close();
+      } catch (_) {}
+    }
+  }
+
+  /// `GET` [url] upstream with Referer/User-Agent injected, returning the full
+  /// body bytes (used for fMP4 init/media fragments), or null on failure.
+  Future<List<int>?> _fetchBytes(String url, _ProxyEntry entry) async {
+    HttpClientResponse? up;
+    try {
+      final HttpClientRequest req = await _client.getUrl(Uri.parse(url));
+      req.followRedirects = true;
+      req.maxRedirects = 8;
+      req.headers
+        ..set(HttpHeaders.refererHeader, entry.referer)
+        ..set(HttpHeaders.userAgentHeader, entry.userAgent)
+        ..set(HttpHeaders.acceptHeader, '*/*');
+      up = await req.close();
+      if (up.statusCode != HttpStatus.ok &&
+          up.statusCode != HttpStatus.partialContent) {
+        await up.drain<void>();
+        return null;
+      }
+      final BytesBuilder bb = BytesBuilder(copy: false);
+      await for (final List<int> chunk in up) {
+        bb.add(chunk);
+      }
+      return bb.takeBytes();
+    } catch (_) {
+      try {
+        await up?.drain<void>();
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  /// `GET` [url] upstream with Referer/User-Agent (and `Accept-Encoding:
+  /// identity`, so no gzip) injected, returning the ASCII text body — used for
+  /// HLS playlists — or null on any non-200 / failure.
+  Future<String?> _fetchText(String url, _ProxyEntry entry) async {
+    HttpClientResponse? up;
+    try {
+      final HttpClientRequest req = await _client.getUrl(Uri.parse(url));
+      req.followRedirects = true;
+      req.maxRedirects = 8;
+      req.headers
+        ..set(HttpHeaders.refererHeader, entry.referer)
+        ..set(HttpHeaders.userAgentHeader, entry.userAgent)
+        ..set(HttpHeaders.acceptEncodingHeader, 'identity')
+        ..set(HttpHeaders.acceptHeader, '*/*');
+      up = await req.close();
+      if (up.statusCode != HttpStatus.ok) {
+        await up.drain<void>();
+        return null;
+      }
+      final StringBuffer sb = StringBuffer();
+      await for (final List<int> chunk in up) {
+        sb.write(String.fromCharCodes(chunk));
+      }
+      return sb.toString();
+    } catch (_) {
+      try {
+        await up?.drain<void>();
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  /// Re-express a live HLS (fMP4) media playlist as a **dynamic** DASH manifest:
+  /// one MUXED `Representation` whose enumerated `<SegmentList>` + `<SegmentTimeline>`
+  /// mirror the current playlist window — an `<Initialization>` from `EXT-X-MAP`,
+  /// then one `<SegmentURL>` per media segment. Init/segment refs are resolved to
+  /// absolute CDN urls (the fMP4 host serves them Referer-free; the patched
+  /// libdash supplies a Referer anyway).
+  ///
+  /// **Timeline continuity (the crux of live).** The engine re-fetches this
+  /// manifest every `minimumUpdatePeriod`; each regeneration must place the same
+  /// segment at the same timeline `t` so playback continues instead of
+  /// restarting. We anchor once on [entry] (first fetch): the first-seen
+  /// `EXT-X-MEDIA-SEQUENCE` becomes timeline-zero and `availabilityStartTime` is
+  /// pinned so that segment is available then. Thereafter segment global-seq `K`
+  /// maps to `t = (K - anchorSeq) * segTicks`, monotonically advancing with the
+  /// live edge.
+  ///
+  /// The enumerated `<SegmentTimeline>` (never a `duration`-attribute / SegmentBase
+  /// shape) is what keeps GstDashSrc on its manifest-download loop and off the
+  /// broken appsrc push path (`signal 'need-data-video' is invalid for instance
+  /// of type 'GstDashSrc'`). Returns null when the playlist yields no segments.
+  /// Parse a live playlist and MERGE its fragments into [entry]'s rolling DVR
+  /// buffer (global-seq → absolute url), anchoring the timeline and caching the
+  /// init url on first sight, then pruning to the CDN's retention. Called
+  /// (possibly repeatedly, to pre-warm the buffer) before [_buildLiveMpd].
+  void _accumulateLiveSegs(_ProxyEntry entry, String m3u8) {
+    final Uri base = Uri.parse(entry.videoUri);
+    String? initUrl;
+    final List<String> segUrls = <String>[];
+    final List<double> segDurs = <double>[];
+    double pendingDur = 0.0;
+    int mediaSeq = 0;
+    for (final String raw in m3u8.split('\n')) {
+      final String line = raw.trim();
+      if (line.isEmpty) continue;
+      if (line.startsWith('#EXT-X-MAP:')) {
+        final RegExpMatch? m = RegExp(r'URI="([^"]+)"').firstMatch(line);
+        if (m != null) initUrl = base.resolve(m.group(1)!).toString();
+      } else if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
+        mediaSeq = int.tryParse(line.split(':').last.trim()) ?? 0;
+      } else if (line.startsWith('#EXTINF:')) {
+        final RegExpMatch? m = RegExp(r'#EXTINF:\s*([0-9.]+)').firstMatch(line);
+        pendingDur = m != null ? (double.tryParse(m.group(1)!) ?? 0.0) : 0.0;
+      } else if (!line.startsWith('#')) {
+        segUrls.add(base.resolve(line).toString());
+        segDurs.add(pendingDur > 0 ? pendingDur : 1.0);
+        pendingDur = 0.0;
+      }
+    }
+    if (segUrls.isEmpty) return;
+
+    // Uniform segment duration (Bilibili live is ~1s constant).
+    entry.liveSegSec = segDurs.isNotEmpty ? segDurs.first : 1.0;
+    final double windowSpan = segDurs.fold(0.0, (a, b) => a + b);
+
+    // Anchor on first sight: the first-ever segment becomes timeline-zero, and
+    // availabilityStartTime is pinned one window in the past (fixed forever).
+    if (entry.liveAnchorSeq == null || entry.liveAvailStart == null) {
+      entry.liveAnchorSeq = mediaSeq;
+      entry.liveAvailStart = DateTime.now()
+          .toUtc()
+          .subtract(Duration(milliseconds: (windowSpan * 1000).round()))
+          .toIso8601String();
+    }
+    if (initUrl != null) entry.liveInitUrl = initUrl;
+
+    for (int i = 0; i < segUrls.length; i++) {
+      entry.liveSegs[mediaSeq + i] = segUrls[i];
+    }
+    // Keep ~a minute of DVR (segments are token-free and don't expire upstream).
+    const int keep = 60;
+    final int newestSeq = mediaSeq + segUrls.length - 1;
+    entry.liveSegs.removeWhere((seq, _) => seq < newestSeq - keep);
+  }
+
+  /// Build the dynamic DASH manifest from [entry]'s accumulated rolling DVR
+  /// buffer. WITHHOLDS the newest ~2 fragments (publishes edge − 2) and starts
+  /// the player ~10s behind that, so the playhead never collides with the live
+  /// edge (a collision EOSes the engine). Returns null when the buffer is empty.
+  String? _buildLiveMpd(_ProxyEntry entry) {
+    if (entry.liveSegs.isEmpty || entry.liveAnchorSeq == null) return null;
+    final int anchorSeq = entry.liveAnchorSeq!;
+    final double segSec = entry.liveSegSec;
+    final int segTicks = max(1, (segSec * 1000).round());
+    final DateTime now = DateTime.now().toUtc();
+
+    final List<int> allSeqs = entry.liveSegs.keys.toList()..sort();
+    // Withhold the newest ~5 fragments from the PUBLISHED manifest (they stay in
+    // the buffer) so the advertised edge trails the real edge by a wide margin —
+    // the player's availability-derived live edge otherwise outruns our published
+    // segments and the playhead collides with it (EOS) ~10s in.
+    const int withhold = 5;
+    final int emit =
+        allSeqs.length > withhold + 1 ? allSeqs.length - withhold : allSeqs.length;
+    final List<int> seqs = allSeqs.sublist(0, emit);
+    if (seqs.isEmpty) return null;
+
+    final int firstSeq = seqs.first;
+    final int firstT = (firstSeq - anchorSeq) * segTicks;
+    final double bufferSpan = seqs.length * segSec;
+    // Start the player WELL behind the (already trailing) edge — aim ~18s — so a
+    // constant deep margin absorbs publish/fetch lag and the player never reaches
+    // the edge. Never deeper than the buffer minus a few segments of headroom.
+    final double spd =
+        min(bufferSpan - segSec * 4, 18.0).clamp(segSec * 4, 20.0);
+    entry.liveMpdFetches++;
+    debugPrint(
+      '[LIVE-MPD] fetch#${entry.liveMpdFetches} anchor=$anchorSeq '
+      'segs=${seqs.length}(+${allSeqs.length - seqs.length} held) firstT=$firstT '
+      'buffer=${bufferSpan.toStringAsFixed(0)}s spd=${spd.toStringAsFixed(1)}s',
+    );
+
+    final StringBuffer b = StringBuffer()
+      ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
+      ..writeln(
+        '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" '
+        'profiles="urn:mpeg:dash:profile:isoff-live:2011" '
+        'type="dynamic" '
+        'availabilityStartTime="${entry.liveAvailStart}" '
+        'publishTime="${now.toIso8601String()}" '
+        'minimumUpdatePeriod="PT2.0S" '
+        'timeShiftBufferDepth="PT${bufferSpan.toStringAsFixed(3)}S" '
+        'suggestedPresentationDelay="PT${spd.toStringAsFixed(1)}S" '
+        // Buffer several seconds before starting so transient underruns don't
+        // stall the live stream.
+        'minBufferTime="PT8S">',
+      )
+      // Pin the player's clock to the same (device) clock we compute AST from, so
+      // segment-availability math never stalls on a skewed TV RTC.
+      ..writeln(
+        '  <UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" '
+        'value="${now.toIso8601String()}"/>',
+      )
+      ..writeln('  <Period start="PT0S">')
+      ..writeln(
+        '    <AdaptationSet mimeType="video/mp4" '
+        'segmentAlignment="true" startWithSAP="1">',
+      )
+      ..writeln(
+        '      <Representation id="0" codecs="avc1.640028,mp4a.40.2" '
+        'bandwidth="2500000">',
+      )
+      ..writeln('        <SegmentList timescale="1000">');
+    if (entry.liveInitUrl != null) {
+      b.writeln(
+        '          <Initialization sourceURL="${_xmlEscape(entry.liveInitUrl!)}"/>',
+      );
+    }
+    // SegmentTimeline: group contiguous seq runs (a missed poll can leave a gap;
+    // an explicit <S t> per run keeps every segment's t = (seq-anchor)*segTicks).
+    b.writeln('          <SegmentTimeline>');
+    int i = 0;
+    while (i < seqs.length) {
+      final int runStart = seqs[i];
+      int runLen = 1;
+      while (i + runLen < seqs.length && seqs[i + runLen] == runStart + runLen) {
+        runLen++;
+      }
+      final int t = (runStart - anchorSeq) * segTicks;
+      b.writeln(
+        '            <S t="$t" d="$segTicks"'
+        '${runLen > 1 ? ' r="${runLen - 1}"' : ''}/>',
+      );
+      i += runLen;
+    }
+    b.writeln('          </SegmentTimeline>');
+    for (final int seq in seqs) {
+      b.writeln(
+        '          <SegmentURL media="${_xmlEscape(entry.liveSegs[seq]!)}"/>',
+      );
+    }
+    b
+      ..writeln('        </SegmentList>')
+      ..writeln('      </Representation>')
+      ..writeln('    </AdaptationSet>')
+      ..writeln('  </Period>')
+      ..writeln('</MPD>');
+    return b.toString();
   }
 
   // ---------------------------------------------------------------------------
@@ -567,38 +921,19 @@ class BiliDashProxy {
   // MPD synthesis
   // ---------------------------------------------------------------------------
 
-  /// Build a minimal static DASH manifest referencing the two `/seg/<token>/*`
-  /// endpoints via `BaseURL`. The `Representation`s carry the SELECTED stream's
-  /// REAL codec / dimensions ([DashStreamMeta]); any field the metadata omits
-  /// falls back to a safe AVC/AAC-shaped default so the manifest stays valid.
+  /// Build a minimal static DASH manifest whose `BaseURL`s are the REAL Bilibili
+  /// CDN urls, so the native adaptive engine fetches every segment directly and
+  /// only this ~2KB manifest travels over loopback (Referer comes from the
+  /// patched libdash). The `Representation`s carry the SELECTED stream's REAL
+  /// codec / dimensions ([DashStreamMeta]); any field the metadata omits falls
+  /// back to a safe AVC/AAC-shaped default so the manifest stays valid. Each
+  /// stream's internal fragments are enumerated as a `<SegmentList>` of byte
+  /// ranges into the fragmented-MP4 (see [_writeSegmentList]).
   String _buildMpd(String token) {
     final _ProxyEntry entry = _registry[token]!;
-    // BaseURLs. Byte-pump mode: absolute loopback `/seg/*` endpoints this server
-    // proxies to the CDN (Referer/UA injected in Dart). Native-DASH mode: the
-    // REAL Bilibili CDN urls, so the native engine fetches every segment directly
-    // and only this manifest travels over loopback (Referer comes from the
-    // patched libdash). Segment addressing differs per mode: byte-pump keeps
-    // the historical single-blob `<SegmentBase indexRange>`, native enumerates
-    // the internal fragments as a `<SegmentList>` of byte ranges into the same
-    // fragmented-MP4 (see _writeSegmentList for why the engine requires it).
-    final String videoUrl =
-        kBiliNativeDash ? entry.videoUri : '$_base/seg/$token/v';
-    final String audioUrl = kBiliNativeDash
-        ? (entry.audioUri ?? '$_base/seg/$token/a')
-        : '$_base/seg/$token/a';
-    final bool hasAudio = entry.audioUri != null && !kBiliNativeVideoOnly;
-    if (kBiliNativeDash) {
-      debugPrint(
-        '[BILI-NATIVE-DASH] manifest BaseURLs'
-        '${kBiliNativeVideoOnly ? ' (VIDEO-ONLY)' : ''} -> v=$videoUrl'
-        '${hasAudio ? ' a=$audioUrl' : ''}',
-      );
-      debugPrint(
-        '[BILI-NATIVE-DASH] segment lists -> '
-        'v=${_describeIndex(entry.videoSeg)}'
-        '${hasAudio ? ' a=${_describeIndex(entry.audioSeg)}' : ''}',
-      );
-    }
+    final String videoUrl = entry.videoUri;
+    final String audioUrl = entry.audioUri ?? '';
+    final bool hasAudio = entry.audioUri != null;
 
     // A `static` (on-demand) MPD needs an explicit presentation duration for the
     // player to build its timeline; without it some demuxers index the streams
@@ -610,13 +945,11 @@ class BiliDashProxy {
         ? ' mediaPresentationDuration="PT${durSec.toStringAsFixed(3)}S"'
         : '';
 
-    // Profile: byte-pump keeps the historical on-demand profile. Native mode
-    // must NOT declare on-demand — that profile IS the single-blob SegmentBase
-    // shape that sends Samsung's GstDashSrc down its broken push path (see
-    // _writeSegmentList); enumerated SegmentLists belong to the main profile.
-    const String profile = kBiliNativeDash
-        ? 'urn:mpeg:dash:profile:isoff-main:2011'
-        : 'urn:mpeg:dash:profile:isoff-on-demand:2011';
+    // The MPD must NOT declare the on-demand profile — that profile IS the
+    // single-blob SegmentBase shape that sends Samsung's GstDashSrc down its
+    // broken push path (see [_writeSegmentList]); enumerated SegmentLists belong
+    // to the main profile.
+    const String profile = 'urn:mpeg:dash:profile:isoff-main:2011';
 
     // ---- Video Representation attributes (real values, safe defaults) ----
     final DashStreamMeta? vm = entry.videoMeta;
@@ -654,13 +987,10 @@ class BiliDashProxy {
       )
       ..writeln('        <BaseURL>${_xmlEscape(videoUrl)}</BaseURL>');
 
-    // Segment addressing for one Representation, per mode.
+    // Segment addressing for one Representation: enumerate its internal fragments
+    // as a <SegmentList> of byte ranges (see [_writeSegmentList]).
     void writeSegments(_SegBase? seg) {
-      if (kBiliNativeDash) {
-        _writeSegmentList(b, seg, durSec);
-      } else {
-        _writeSegmentBase(b, seg);
-      }
+      _writeSegmentList(b, seg, durSec);
     }
 
     writeSegments(entry.videoSeg);
@@ -746,30 +1076,7 @@ class BiliDashProxy {
     return b.toString();
   }
 
-  /// Emit the `<SegmentBase>` child for a Representation from a probed [seg].
-  /// With a `sidx` we advertise the full index range; without one we still
-  /// declare the initialization range so the demuxer knows where media begins
-  /// (the stream then plays as a single self-indexed segment). When [seg] is
-  /// null nothing is written and the Representation stays BaseURL-only.
-  static void _writeSegmentBase(StringBuffer b, _SegBase? seg) {
-    if (seg == null) return;
-    if (seg.sidxStart != null && seg.sidxEnd != null) {
-      b
-        ..writeln(
-          '        <SegmentBase indexRange="${seg.sidxStart}-${seg.sidxEnd! - 1}" '
-          'indexRangeExact="true">',
-        )
-        ..writeln('          <Initialization range="0-${seg.initEnd - 1}"/>')
-        ..writeln('        </SegmentBase>');
-    } else {
-      b
-        ..writeln('        <SegmentBase>')
-        ..writeln('          <Initialization range="0-${seg.initEnd - 1}"/>')
-        ..writeln('        </SegmentBase>');
-    }
-  }
-
-  /// NATIVE mode: emit the Representation's segments as an explicit
+  /// Emit the Representation's segments as an explicit
   /// `<SegmentList>` — an `<Initialization range>`, a `<SegmentTimeline>` in
   /// the sidx's own timescale, and one `<SegmentURL mediaRange>` per internal
   /// `moof`+`mdat` fragment, all parsed from the stream's own `sidx`.
@@ -845,32 +1152,6 @@ class BiliDashProxy {
       i += repeat + 1;
     }
     b.writeln('          </SegmentTimeline>');
-  }
-
-  /// One-line description of a stream's resolved index for the
-  /// `[BILI-NATIVE-DASH]` smoke-test log.
-  static String _describeIndex(_SegBase? seg) {
-    final _SidxIndex? idx = seg?.index;
-    if (idx == null || !idx.leaf || idx.sizes.isEmpty) return 'whole-file';
-    return '${idx.sizes.length}frags/ts=${idx.timescale}';
-  }
-
-  /// Build a [_SegBase] from Bilibili's supplied `segmentBase` byte ranges,
-  /// preferred over [_probeSegmentBase] (no round-trip, authoritative). Returns
-  /// null when no usable initialization range is present, so the caller falls
-  /// back to probing. The duration is unknown from ranges alone; it is left null
-  /// and the manifest instead uses the entry's total duration.
-  static _SegBase? _segBaseFromMeta(DashStreamMeta? meta) {
-    if (meta == null) return null;
-    final List<int>? init = _parseRange(meta.initializationRange);
-    if (init == null) return null;
-    final List<int>? index = _parseRange(meta.indexRange);
-    return _SegBase(
-      init[1] + 1, // initEnd is exclusive; Bilibili's range end is inclusive.
-      index?[0],
-      index != null ? index[1] + 1 : null,
-      null,
-    );
   }
 
   /// Parse an inclusive DASH byte range `"first-last"` (e.g. `"823-1381"`) into
@@ -978,9 +1259,16 @@ class _ProxyEntry {
     this.videoMeta,
     this.audioMeta,
     this.durationSec,
+    this.isLiveHls = false,
   });
 
   final String videoUri;
+
+  /// When true, [videoUri] is a live HLS (fMP4) `.m3u8` playlist URL and the
+  /// entry is served as a synthesized dynamic DASH manifest (`/live-mpd/…`) so
+  /// the WORKING `libgstdash` demuxer decodes it instead of the version-skewed
+  /// `libgsthls` (which mis-negotiates video caps on this firmware).
+  final bool isLiveHls;
 
   /// Second DASH stream, or `null` for single-url sources.
   final String? audioUri;
@@ -999,6 +1287,34 @@ class _ProxyEntry {
   /// for a `sidx` duration (i.e. when Bilibili's `segmentBase` was used). null ⇒
   /// rely solely on the probed value, if any.
   final double? durationSec;
+
+  /// Live HLS→DASH anchor, set on the FIRST `/live-mpd` fetch and kept fixed
+  /// across refreshes so the dynamic manifest's media timeline stays monotonic
+  /// and its wall-clock availability stays consistent as the playlist rolls.
+  ///
+  /// [liveAnchorSeq] is the `EXT-X-MEDIA-SEQUENCE` seen first (maps to timeline
+  /// `t = (mediaSeq - liveAnchorSeq) * segTicks`); [liveAvailStart] is the
+  /// `availabilityStartTime` (ISO-8601) pinned so that anchor segment is
+  /// available at first fetch.
+  int? liveAnchorSeq;
+  String? liveAvailStart;
+
+  /// Count of `/live-mpd` regenerations (diagnostic — how often the engine
+  /// re-polls the dynamic manifest to follow the live edge).
+  int liveMpdFetches = 0;
+
+  /// Rolling DVR buffer of seen media segments (global-seq → absolute url),
+  /// accumulated across `/live-mpd` fetches and pruned to the CDN's retention.
+  /// The manifest exposes this whole span (not just the upstream playlist's
+  /// current ~10s window) so the player always has buffered segments ahead of
+  /// its (suggestedPresentationDelay-behind-edge) position and never underruns.
+  final Map<int, String> liveSegs = <int, String>{};
+
+  /// Init-segment (`EXT-X-MAP`) url; stable across a live session.
+  String? liveInitUrl;
+
+  /// Per-segment duration (seconds) from the live playlist (Bilibili ~1s).
+  double liveSegSec = 1.0;
 
   /// Whether [videoSeg]/[audioSeg] have been resolved yet (set once, up front).
   bool probed = false;
@@ -1030,8 +1346,7 @@ class _SegBase {
   final double? durationSec;
 
   /// The sidx's parsed references, when the probed bytes covered the box —
-  /// native mode's fragment enumeration ([_writeSegmentList]). Always null from
-  /// [_segBaseFromMeta] (byte-pump metadata path), which never needs it.
+  /// drives the `<SegmentList>` fragment enumeration ([_writeSegmentList]).
   final _SidxIndex? index;
 
   @override

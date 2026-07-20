@@ -1,6 +1,7 @@
 import 'package:PiliPlus/models/dynamics/result.dart';
 import 'package:PiliPlus/models/horizontal_video_model.dart';
 import 'package:PiliPlus/models_new/history/list.dart';
+import 'package:PiliPlus/models_new/live/live_feed_index/card_data_list_item.dart';
 import 'package:PiliPlus/utils/duration_utils.dart';
 import 'package:PiliPlus/utils/num_utils.dart';
 
@@ -24,6 +25,7 @@ class TvVideoData {
     this.remainingText,
     this.viewAtText,
     this.showPlayGlyph = false,
+    this.isLive = false,
   });
 
   final String title;
@@ -58,6 +60,11 @@ class TvVideoData {
   /// Whether to show the focus-only ▶ resume glyph (history-sourced cards).
   final bool showPlayGlyph;
 
+  /// Whether this card is a live stream: the cover shows a red LIVE pill in
+  /// place of the duration badge, and [viewText] renders with a viewer/eye icon
+  /// (the `watchedShow` "N人看过" line) instead of the play-count icon.
+  final bool isLive;
+
   /// Maps hot / search-result items ([HorizontalVideoModel] subclasses).
   static TvVideoData fromHorizontal(HorizontalVideoModel item) {
     final view = item.stat.view;
@@ -71,6 +78,20 @@ class TvVideoData {
       durationText: item.duration > 0
           ? DurationUtils.formatDuration(item.duration)
           : null,
+    );
+  }
+
+  /// Maps a live-stream card ([CardLiveItem], from the live feed's recommended
+  /// list or the 正在直播的关注 follow rail). Live streams have no duration, so
+  /// the cover shows a red LIVE pill instead; the `watchedShow` "N人看过" line
+  /// becomes the (eye-iconed) view stat.
+  static TvVideoData fromLiveCard(CardLiveItem item) {
+    return TvVideoData(
+      title: item.title ?? '',
+      cover: item.systemCover,
+      ownerName: item.uname,
+      viewText: item.watchedShow?.textLarge,
+      isLive: true,
     );
   }
 

@@ -254,6 +254,16 @@ class LiveRoomController extends GetxController {
   int liveUrlIndex = 0;
 
   void _initStreamIndex() {
+    // On TV the CAPI/general engine can't demux live FLV (the mobile default), so
+    // the adaptive (PlusPlayer) engine plays HLS instead — natively, zero-byte, no
+    // proxy. `libgsthls` (needed for either HLS variant) is unblocked by the
+    // app-bundled stub `libclearkey.so.0` (see tizen/lib-overlay/). Use the MPEG-TS
+    // variant: its `use_new_hls_mpegts_demuxer` path produces clean video caps,
+    // where the fMP4/CMAF demuxer emits malformed video caps and stalls the video
+    // decoder. Force it regardless of the mobile stream preference.
+    if (PlatformUtils.isTV && _selectLiveHlsFmp4()) {
+      return;
+    }
     final pref = Pref.liveStream;
     if (pref != null) {
       try {
@@ -278,6 +288,26 @@ class LiveRoomController extends GetxController {
         }
       } catch (_) {}
     }
+  }
+
+  /// Select the `http_hls` / `fmp4` variant (preferring the AVC codec for widest
+  /// Tizen decoder support), setting the stream/format/codec indices. Returns
+  /// false when the server didn't offer it, so the caller falls back to the
+  /// normal (FLV-first) selection.
+  bool _selectLiveHlsFmp4() {
+    for (final (i, s) in stream.indexed) {
+      if (s.protocolName != 'http_hls') continue;
+      for (final (j, f) in s.format.indexed) {
+        if (f.formatName != 'fmp4') continue;
+        int k = f.codec.indexWhere((c) => c.codecName == 'avc');
+        if (k < 0) k = 0;
+        streamIndex = i;
+        formatIndex = j;
+        codecIndex = k;
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void>? initLiveUrl({

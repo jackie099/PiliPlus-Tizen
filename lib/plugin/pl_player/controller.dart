@@ -942,6 +942,12 @@ class PlPlayerController with BlockConfigMixin {
     _subscriptions = [
       /// playing
       player.playingStream.listen((bool playing) {
+        // The CAPI (general) engine used for live emits a spurious playing=false
+        // while it is still decoding, which would wrongly flip the UI to "paused"
+        // (the play-arrow glyph) mid-playback. For live, ignore engine-driven
+        // pause entirely — a genuine pause goes through pause() directly (the live
+        // OK toggle calls the app play()/pause(), see onDoubleTapCenter).
+        if (isLive && !playing) return;
         WakelockPlus.toggle(enable: playing);
         if (playing) {
           if (_isAutoEnterPip) {
@@ -1324,7 +1330,18 @@ class PlPlayerController with BlockConfigMixin {
 
   // 双击播放、暂停
   Future<void> onDoubleTapCenter() async {
-    if (!isLive && isCompleted) {
+    if (isLive) {
+      // Drive the app play-state directly: the CAPI engine's playing events are
+      // unreliable for the live progressive stream (see the playingStream
+      // listener), so toggle via play()/pause() which set playerStatus + glyph.
+      if (playerStatus.value.isPlaying) {
+        await pause();
+      } else {
+        await play();
+      }
+      return;
+    }
+    if (isCompleted) {
       await videoPlayerController!.seek(Duration.zero);
       videoPlayerController!.play();
     } else {

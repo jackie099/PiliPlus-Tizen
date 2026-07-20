@@ -16,4 +16,18 @@
     </TizenTpkUserIncludeFiles>
   </ItemGroup>
 
+  <!--
+    App-owned native overlay: a stub libclearkey.so.0 placed alongside the bundled
+    GStreamer plugins in the tpk's lib/ dir. On this retail TV the firmware's real
+    libclearkey.so.0 is EPERM-blocked, so libgsthls.so (RPATH $ORIGIN, needs
+    libclearkey as a load-time dependency) fails to load and live HLS can't play.
+    Bilibili live HLS is unencrypted, so the stub's no-op symbols are never called —
+    they only need to resolve at dlopen. See tizen/lib-overlay/stub_clearkey.c.
+  -->
+  <ItemGroup>
+    <TizenTpkUserIncludeFiles Include="lib-overlay\libclearkey.so.0">
+      <TizenTpkSubDir>lib</TizenTpkSubDir>
+    </TizenTpkUserIncludeFiles>
+  </ItemGroup>
+
 </Project>

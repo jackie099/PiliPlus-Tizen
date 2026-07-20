@@ -88,7 +88,12 @@ class _TvDataVideoCardState extends State<TvDataVideoCard> {
   Widget _buildMetaRow(TvVideoData data) {
     final stats = <Widget>[
       if (data.viewText case final viewText?)
-        _buildStat(Icons.play_arrow_rounded, viewText),
+        _buildStat(
+          data.isLive
+              ? Icons.remove_red_eye_outlined
+              : Icons.play_arrow_rounded,
+          viewText,
+        ),
       if (data.danmuText case final danmuText?)
         _buildStat(Icons.subtitles_outlined, danmuText),
     ];

@@ -42,7 +42,13 @@ class TvCardCover extends StatelessWidget {
                 ),
               ),
             ),
-            if (data.finished)
+            if (data.isLive)
+              _badge(
+                bottom: TvTheme.badgeInsetBottom,
+                color: TvTheme.liveBadge,
+                child: const Text('LIVE', style: TvTheme.durationBadge),
+              )
+            else if (data.finished)
               _badge(
                 bottom: TvTheme.badgeInsetBottom,
                 child: Row(
@@ -101,13 +107,17 @@ class TvCardCover extends StatelessWidget {
     );
   }
 
-  Widget _badge({required double bottom, required Widget child}) {
+  Widget _badge({
+    required double bottom,
+    required Widget child,
+    Color color = const Color(0x8A000000),
+  }) {
     return Positioned(
       right: TvTheme.badgeInsetRight,
       bottom: bottom,
       child: DecoratedBox(
-        decoration: const BoxDecoration(
-          color: Color(0x8A000000),
+        decoration: BoxDecoration(
+          color: color,
           borderRadius: TvTheme.badgeRadius,
         ),
         child: Padding(padding: TvTheme.badgePadding, child: child),
