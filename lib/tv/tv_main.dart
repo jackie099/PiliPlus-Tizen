@@ -2,6 +2,7 @@ import 'package:PiliPlus/tv/focus/tv_focusable.dart';
 import 'package:PiliPlus/tv/pages/tv_dynamics.dart';
 import 'package:PiliPlus/tv/pages/tv_home.dart';
 import 'package:PiliPlus/tv/pages/tv_hot.dart';
+import 'package:PiliPlus/tv/pages/tv_live.dart';
 import 'package:PiliPlus/tv/pages/tv_my.dart';
 import 'package:PiliPlus/tv/pages/tv_search.dart';
 import 'package:PiliPlus/tv/pages/tv_settings.dart';
@@ -37,6 +38,7 @@ class _TvMainState extends State<TvMain> {
   static final List<_TvTab> _tabs = [
     _TvTab(label: '推荐', builder: (_) => const TvHome()),
     _TvTab(label: '热门', builder: (_) => const TvHot()),
+    _TvTab(label: '直播', builder: (_) => const TvLive()),
     _TvTab(label: '动态', builder: (_) => const TvDynamics()),
     _TvTab(label: '我的', builder: (_) => const TvMy()),
     _TvTab(label: '搜索', builder: (_) => const TvSearch()),
