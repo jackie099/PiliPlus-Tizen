@@ -223,12 +223,31 @@ class _TvLiveRoomPageState extends State<TvLiveRoomPage> {
     _focusNode.requestFocus();
   }
 
-  /// OK: toggle play/pause via the shared gesture path (pausing also closes the
-  /// socket through the status listener).
+  /// OK: pause freezes the picture; resume REJOINS THE LIVE EDGE.
+  ///
+  /// The welded progressive stream (`/live-prog`, see [BiliDashProxy]) has no
+  /// pause concept — the player believes it is reading one continuous growing
+  /// file. While paused it stops draining the socket, so the pump stalls mid
+  /// `flush()` while the live stream rolls on; the fragments it would append on
+  /// resume carry a `baseMediaDecodeTime` a pause-length ahead of the last welded
+  /// byte, and a PTS-synced sink waits that gap out in real time — the picture
+  /// stays frozen for as long as you paused. So resuming re-opens the stream on a
+  /// fresh token (exactly what 刷新直播 does), which restarts at the current live
+  /// edge and auto-plays via `playIfExists`.
+  ///
+  /// Pausing goes through the app-level [PlPlayerController.pause], which for
+  /// live also fans out to the status listeners — that is what stops the danmaku,
+  /// the 开播 timer and the chat socket.
   void _togglePlayPause() {
-    if (playerCtr.videoPlayerController != null) {
-      playerCtr.onDoubleTapCenter();
+    if (playerCtr.videoPlayerController == null) return;
+    if (playerCtr.playerStatus.value.isPlaying) {
+      playerCtr.pause();
+      return;
     }
+    // Re-opening tears down the native controller and the stale pump; guard so a
+    // double-press cannot run two overlapping setDataSource calls.
+    if (playerCtr.processing) return;
+    liveCtr.queryLiveUrl();
   }
 
   /// Right: quick-toggle the danmaku bullets (same flag + persistence as the
