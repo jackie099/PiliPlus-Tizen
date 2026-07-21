@@ -942,6 +942,15 @@ class PlPlayerController with BlockConfigMixin {
     _subscriptions = [
       /// playing
       player.playingStream.listen((bool playing) {
+        // The CAPI (general) engine drives the welded live progressive stream, and
+        // its play-state events are unusable: it emits a spurious playing=false
+        // while it is still decoding, and a later playing=true that would clobber
+        // a genuine user pause. Suppressing only the false half left playerStatus
+        // desynced from the engine, which put the OK toggle a press out of phase —
+        // it read as "play/pause doesn't work". For live the APP is the single
+        // source of truth: play()/pause() set playerStatus and fan out to the
+        // status listeners themselves (see _notifyLiveStatus).
+        if (isLive) return;
         WakelockPlus.toggle(enable: playing);
         if (playing) {
           if (_isAutoEnterPip) {
@@ -976,6 +985,12 @@ class PlPlayerController with BlockConfigMixin {
       ///completed
       player.completedStream.listen((bool completed) {
         if (completed) {
+          // The welded live progressive stream never legitimately completes — the
+          // player only reports EOS if the pump died. Latching .completed would
+          // freeze the glyph and send the OK toggle down the VOD replay path
+          // (seek to zero) on a stream that cannot be rewound, after which
+          // playback can never be restarted.
+          if (isLive) return;
           playerStatus.value = .completed;
 
           for (final element in _statusListeners) {
@@ -1182,13 +1197,29 @@ class PlPlayerController with BlockConfigMixin {
     audioSessionHandler?.setActive(true);
 
     playerStatus.value = PlayerStatus.playing;
+    _notifyLiveStatus(PlayerStatus.playing);
     // screenManager.setOverlays(false);
+  }
+
+  /// Live owns its own status fan-out.
+  ///
+  /// The engine's playingStream is ignored entirely for live (see
+  /// [_startListeners]), so play()/pause() must notify the page themselves — that
+  /// fan-out is what pauses/resumes the danmaku, the 开播 timer and the chat
+  /// socket. No-op for VOD, where playingStream still drives everything.
+  void _notifyLiveStatus(PlayerStatus status) {
+    if (!isLive) return;
+    WakelockPlus.toggle(enable: status == PlayerStatus.playing);
+    for (final element in _statusListeners) {
+      element(status);
+    }
   }
 
   /// 暂停播放
   Future<void> pause({bool notify = true, bool isInterrupt = false}) async {
     await _videoPlayerController?.pause();
     playerStatus.value = PlayerStatus.paused;
+    _notifyLiveStatus(PlayerStatus.paused);
 
     // 主动暂停时让出音频焦点
     if (!isInterrupt) {

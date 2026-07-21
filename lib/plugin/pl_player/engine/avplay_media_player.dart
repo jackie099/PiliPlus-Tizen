@@ -2,10 +2,11 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 
 import 'package:video_player_avplay/video_player.dart';
 import 'package:video_player_avplay/video_player_platform_interface.dart'
-    show VideoFormat, PlayerEngine;
+    show VideoFormat, PlayerEngine, StreamingPropertyType;
 
 import 'abstract_media_player.dart';
 import 'bili_dash_proxy.dart';
@@ -253,25 +254,52 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       );
     }
 
-    // The proxy returns a 127.0.0.1 url — a synthetic DASH manifest for the
-    // dual-stream case, a header-injecting passthrough otherwise — and folds in
-    // the mandatory Referer.
-    final String url = await _proxy.urlFor(
-      effective,
-      referer: _referer,
-      userAgent: _userAgent,
-      videoMeta: effective.videoMeta,
-      audioMeta: effective.audioMeta,
-      duration: effective.totalDuration,
-    );
+    // Dual-stream (separate video + audio) plays natively as ZERO-BYTE DASH: the
+    // proxy serves only a ~2KB synthetic MPD with real CDN `<BaseURL>`s and the
+    // adaptive (PlusPlayer) engine fetches the segments directly — the Referer
+    // comes from the patched `libdash`.
+    final bool nativeDash = effective.hasSeparateAudio;
+
+    // Live plays as a PROGRESSIVE concat on the CAPI (general) engine. Bilibili's
+    // live fMP4 (`.../index.m3u8`) is a single MUXED stream; the proxy welds its
+    // fragments into ONE continuous fMP4 byte stream that the general engine
+    // plays like a durl mp4. This is the ONE path where live video actually
+    // renders — the adaptive/GstDashSrc DASH remux decodes but re-prepares its
+    // pipeline at the live edge and the video caps come up broken on this closed
+    // firmware. Only live produces an `.m3u8` uri here (VOD is dual-stream DASH or
+    // a durl MP4); remaining single-url sources fall to the `/direct` byte-pump.
+    final bool liveHls = !nativeDash && effective.videoUri.contains('.m3u8');
+
+    // Only native dual-stream DASH runs on the adaptive engine; live-progressive
+    // and single-url byte-pump sources use the CAPI (general) engine.
+    final bool adaptive = nativeDash;
+
+    // A 127.0.0.1 proxy url in every case: a synthetic DASH manifest (`/mpd`) for
+    // the dual-stream native case, a progressive fMP4 concat (`/live-prog`) for
+    // live, or a header-injecting passthrough (`/direct`) for the remaining
+    // single-url byte-pump sources.
+    final String url = liveHls
+        ? await _proxy.urlForLiveProgressive(
+            effective.videoUri,
+            referer: _referer,
+            userAgent: _userAgent,
+          )
+        : await _proxy.urlFor(
+            effective,
+            referer: _referer,
+            userAgent: _userAgent,
+            videoMeta: effective.videoMeta,
+            audioMeta: effective.audioMeta,
+            duration: effective.totalDuration,
+          );
     if (_disposed) {
       return;
     }
 
-    // A merged dual-stream source is DASH; everything else is left to native
-    // format detection.
+    // Only dual-stream VOD is DASH. Live is a welded progressive fMP4 and durl
+    // sources are plain files — both are `other` on the CAPI (general) engine.
     final VideoFormat format =
-        effective.hasSeparateAudio ? VideoFormat.dash : VideoFormat.other;
+        adaptive ? VideoFormat.dash : VideoFormat.other;
 
     final Map<String, String> httpHeaders = <String, String>{};
     if (_userAgent != null && _userAgent!.isNotEmpty) {
@@ -282,14 +310,31 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       httpHeaders['Cookie'] = cookie;
     }
 
+    // The adaptive-streaming (PlusPlayer) engine ignores httpHeaders and honors
+    // only Cookie / User-Agent, and only via streamingProperty; for VOD DASH the
+    // Referer is injected by the patched libdash. Everything on the general
+    // engine (live-progressive, `/direct` byte-pump) gets its headers from the
+    // proxy relay instead, so it needs no streamingProperty at all.
+    final Map<StreamingPropertyType, String>? streamingProperty = adaptive
+        ? <StreamingPropertyType, String>{
+            if (_userAgent != null && _userAgent!.isNotEmpty)
+              StreamingPropertyType.userAgent: _userAgent!,
+            if (cookie != null && cookie.isNotEmpty)
+              StreamingPropertyType.cookie: cookie,
+          }
+        : null;
+
     final VideoPlayerController controller = VideoPlayerController.network(
       url,
       formatHint: format,
       httpHeaders: httpHeaders,
-      // All our media is served through the localhost DASH proxy; the
-      // adaptive-streaming engine fails to prepare those sources, so force the
-      // general-purpose engine (previously a native plugin patch).
-      playerEngine: PlayerEngine.general,
+      streamingProperty: streamingProperty,
+      // Only dual-stream native DASH runs on the adaptive-streaming (PlusPlayer)
+      // engine (patched-libdash injects the Referer). Live-progressive concat and
+      // single-url byte-pump sources use the CAPI (general) engine fed by the
+      // loopback relay.
+      playerEngine:
+          adaptive ? PlayerEngine.adaptiveStreaming : PlayerEngine.general,
     );
     _controller = controller;
     _prev = null;
@@ -314,23 +359,38 @@ class AvplayMediaPlayer implements AbstractMediaPlayer {
       return;
     }
 
-    // Seek-on-open must happen AFTER initialize().
-    final Duration? start = source.start;
-    if (start != null && start > Duration.zero) {
-      await controller.seekTo(start);
-    }
+    // Post-initialize control tail (seek/volume/rate/play). On the adaptive
+    // (PlusPlayer) engine any of these can throw PlatformException during the
+    // brief preroll window right after initialize() — e.g. SetVolume before the
+    // pipeline is fully Ready. That throw must NOT escape open(): it would hit
+    // PlPlayerController._createVideoController's catch, set dataStatus=error,
+    // and skip the success tail (dataStatus=loaded / onInit), so videoState
+    // never flips true and the view keeps showing the cover+spinner instead of
+    // mounting the native video overlay — video decodes but is never displayed.
+    // These calls are best-effort; a genuine load failure already surfaced via
+    // the initialize() rethrow above, and the plugin re-applies volume/pause
+    // from its own `initialized` handler. So swallow (publish for observability).
+    try {
+      final Duration? start = source.start;
+      if (start != null && start > Duration.zero) {
+        await controller.seekTo(start);
+      }
 
-    // Re-apply persisted rate/volume onto the fresh controller.
-    await controller.setVolume((_volumePercent / 100).clamp(0.0, 1.0));
-    if (_rate > 0 && _rate != 1.0) {
-      await controller.setPlaybackSpeed(_rate);
-    }
+      // Re-apply persisted rate/volume onto the fresh controller.
+      if (_volumePercent != 100.0) {
+        await controller.setVolume((_volumePercent / 100).clamp(0.0, 1.0));
+      }
+      if (_rate > 0 && _rate != 1.0) {
+        await controller.setPlaybackSpeed(_rate);
+      }
 
-    // A freshly-prepared controller is already paused (Ready, not Playing), so
-    // only an explicit play() is needed. Calling pause() here would throw
-    // PlatformException(Pause) and abort open() before the widget can mount.
-    if (play) {
-      await controller.play();
+      // A freshly-prepared controller is already paused (Ready, not Playing), so
+      // only an explicit play() is needed.
+      if (play) {
+        await controller.play();
+      }
+    } on PlatformException catch (e) {
+      _emit(_errorSC, e.toString());
     }
   }
 

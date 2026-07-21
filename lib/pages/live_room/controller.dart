@@ -254,6 +254,15 @@ class LiveRoomController extends GetxController {
   int liveUrlIndex = 0;
 
   void _initStreamIndex() {
+    // On TV this TV can't demux live FLV (the mobile default) at all, so force the
+    // http_hls/fMP4 variant regardless of the mobile stream preference: its
+    // fragments are welded into one continuous progressive fMP4 by BiliDashProxy
+    // (`/live-prog`) and played on the CAPI (general) engine. Native HLS is NOT
+    // used — `libgsthls` is version-skewed against this firmware and mis-negotiates
+    // the video caps. See docs/tizen-tv-playback.md.
+    if (PlatformUtils.isTV && _selectLiveHlsFmp4()) {
+      return;
+    }
     final pref = Pref.liveStream;
     if (pref != null) {
       try {
@@ -278,6 +287,26 @@ class LiveRoomController extends GetxController {
         }
       } catch (_) {}
     }
+  }
+
+  /// Select the `http_hls` / `fmp4` variant (preferring the AVC codec for widest
+  /// Tizen decoder support), setting the stream/format/codec indices. Returns
+  /// false when the server didn't offer it, so the caller falls back to the
+  /// normal (FLV-first) selection.
+  bool _selectLiveHlsFmp4() {
+    for (final (i, s) in stream.indexed) {
+      if (s.protocolName != 'http_hls') continue;
+      for (final (j, f) in s.format.indexed) {
+        if (f.formatName != 'fmp4') continue;
+        int k = f.codec.indexWhere((c) => c.codecName == 'avc');
+        if (k < 0) k = 0;
+        streamIndex = i;
+        formatIndex = j;
+        codecIndex = k;
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void>? initLiveUrl({
